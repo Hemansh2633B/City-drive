@@ -109,6 +109,9 @@ class VehicleState:
     # Physics body reference
     body_id: int = -1
     
+    # Identity
+    name: str = ""
+    
     # Stats
     distance_traveled: float = 0.0
     max_speed_reached: float = 0.0
@@ -154,10 +157,14 @@ class Vehicle:
         self.body.force = vec2_zero()
         self.body.torque = 0.0
         
+        # Preserve name if it exists
+        old_name = self.state.name if hasattr(self.state, 'name') else ""
+        
         self.state = VehicleState()
         self.state.body_id = self.body.id
         self.state.position = position.copy()
         self.state.angle = angle
+        self.state.name = old_name
         self._last_slip_angle = 0.0
     
     def set_input(self, throttle: float, brake: float, steering: float, boost: bool = False) -> None:

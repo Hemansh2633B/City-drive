@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
-from core.math import Vec2, vec2, vec2_add, vec2_sub, vec2_mul, vec2_normalize, vec2_rotate, vec2_angle
+from core.math import Vec2, vec2, vec2_add, vec2_sub, vec2_mul, vec2_normalize, vec2_rotate, vec2_angle, vec2_dot
 from track.track import Track, TrackSegment, Checkpoint
 from vehicles.vehicle import Vehicle, VehicleState
 from telemetry.telemetry import ReplayPlayer
