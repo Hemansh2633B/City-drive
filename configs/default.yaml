@@ -1,0 +1,284 @@
+# Game Configuration
+# All settings that affect deterministic simulation
+
+game:
+  # Fixed timestep for deterministic physics (seconds)
+  fixed_dt: 0.016666666666666666  # 60 Hz
+  
+  # Maximum simulation steps per episode (prevents infinite episodes)
+  max_episode_steps: 10000
+  
+  # Maximum race time in seconds
+  max_race_time: 300.0
+  
+  # Physics iterations per frame (for stability)
+  physics_substeps: 4
+  
+  # Enable/disable features
+  enable_collision_response: true
+  enable_drift: true
+  enable_surface_friction: true
+
+# Track Generation Configuration
+track:
+  # Minimum/maximum track complexity (0.0 to 1.0)
+  min_complexity: 0.2
+  max_complexity: 0.8
+  
+  # Road width range (meters)
+  min_road_width: 8.0
+  max_road_width: 16.0
+  
+  # Track size range (meters)
+  min_track_length: 400.0
+  max_track_length: 2000.0
+  
+  # Number of checkpoints
+  min_checkpoints: 8
+  max_checkpoints: 24
+  
+  # Corner types enabled
+  enable_hairpins: true
+  enable_chicanes: true
+  enable_s_curves: true
+  
+  # Validation settings
+  max_validation_attempts: 10
+  min_corner_radius: 5.0
+  max_corner_radius: 50.0
+  
+  # Theme presets
+  themes:
+    asphalt:
+      surface_friction: 1.0
+      offroad_friction: 0.3
+      color_road: [50, 50, 50]
+      color_grass: [34, 139, 34]
+      color_line: [255, 255, 255]
+    desert:
+      surface_friction: 0.85
+      offroad_friction: 0.25
+      color_road: [194, 178, 128]
+      color_grass: [210, 180, 140]
+      color_line: [255, 255, 200]
+    snow:
+      surface_friction: 0.4
+      offroad_friction: 0.15
+      color_road: [220, 220, 230]
+      color_grass: [240, 240, 250]
+      color_line: [200, 200, 220]
+    grassland:
+      surface_friction: 0.9
+      offroad_friction: 0.35
+      color_road: [80, 80, 70]
+      color_grass: [60, 150, 60]
+      color_line: [255, 255, 200]
+    neon:
+      surface_friction: 1.1
+      offroad_friction: 0.2
+      color_road: [20, 20, 40]
+      color_grass: [10, 10, 20]
+      color_line: [0, 255, 255]
+    industrial:
+      surface_friction: 1.0
+      offroad_friction: 0.3
+      color_road: [70, 70, 70]
+      color_grass: [50, 50, 50]
+      color_line: [255, 200, 0]
+    dirt:
+      surface_friction: 0.7
+      offroad_friction: 0.5
+      color_road: [139, 115, 85]
+      color_grass: [101, 67, 33]
+      color_line: [255, 255, 255]
+
+# Vehicle Configuration
+vehicle:
+  # Vehicle presets
+  presets:
+    balanced:
+      top_speed: 45.0          # m/s (~162 km/h)
+      acceleration: 12.0       # m/s^2
+      brake_force: 18.0        # m/s^2
+      steering_sensitivity: 3.5 # rad/s at max speed
+      grip: 1.0
+      mass: 1200.0             # kg
+      width: 2.0               # meters
+      length: 4.5              # meters
+      drift_factor: 0.3
+      drag_coefficient: 0.32
+      downforce: 0.0
+    speedster:
+      top_speed: 65.0          # m/s (~234 km/h)
+      acceleration: 15.0
+      brake_force: 15.0
+      steering_sensitivity: 2.8
+      grip: 0.7
+      mass: 1000.0
+      width: 1.9
+      length: 4.3
+      drift_factor: 0.5
+      drag_coefficient: 0.28
+      downforce: 0.0
+    gripper:
+      top_speed: 35.0          # m/s (~126 km/h)
+      acceleration: 10.0
+      brake_force: 22.0
+      steering_sensitivity: 4.2
+      grip: 1.4
+      mass: 1400.0
+      width: 2.1
+      length: 4.7
+      drift_factor: 0.15
+      drag_coefficient: 0.38
+      downforce: 500.0
+
+# AI Training Configuration
+training:
+  # Default observation mode: "vector", "sensor", "image", "combined"
+  observation_mode: "vector"
+  
+  # Raycast sensor configuration
+  sensor_config:
+    num_rays: 16
+    max_distance: 50.0
+    angles: [-3.14159, -2.35619, -1.5708, -0.7854, 0.0, 0.7854, 1.5708, 2.35619, 3.14159]
+    # 8 directions: back, back-left, left, front-left, front, front-right, right, back-right
+  
+  # Reward weights (all configurable)
+  rewards:
+    progress_per_meter: 0.1
+    checkpoint_bonus: 10.0
+    lap_bonus: 100.0
+    race_win_bonus: 500.0
+    speed_bonus_factor: 0.01
+    collision_penalty: -5.0
+    offroad_penalty_per_second: -2.0
+    backward_penalty: -1.0
+    spin_penalty: -0.5
+    idle_penalty: -0.1
+    wrong_way_penalty: -3.0
+    overtake_bonus: 20.0
+    overtaken_penalty: -10.0
+  
+  # Termination conditions
+  termination:
+    max_offroad_time: 5.0       # seconds
+    max_collisions: 10
+    max_idle_time: 10.0         # seconds
+    max_wrong_way_time: 3.0     # seconds
+    min_speed_threshold: 1.0    # m/s
+  
+  # Curriculum learning
+  curriculum:
+    enabled: true
+    stages:
+      - name: "easy"
+        complexity: 0.2
+        road_width_multiplier: 1.5
+        speed_multiplier: 0.6
+        max_opponents: 0
+      - name: "medium"
+        complexity: 0.4
+        road_width_multiplier: 1.2
+        speed_multiplier: 0.8
+        max_opponents: 1
+      - name: "hard"
+        complexity: 0.6
+        road_width_multiplier: 1.0
+        speed_multiplier: 1.0
+        max_opponents: 3
+      - name: "expert"
+        complexity: 0.8
+        road_width_multiplier: 0.8
+        speed_multiplier: 1.2
+        max_opponents: 4
+
+# NPC AI Configuration
+npc:
+  # AI Profiles
+  profiles:
+    beginner:
+      target_speed_factor: 0.5
+      braking_distance_factor: 1.8
+      reaction_time: 0.3
+      overtake_threshold: 0.9
+      aggression: 0.1
+      error_rate: 0.15
+    normal:
+      target_speed_factor: 0.75
+      braking_distance_factor: 1.3
+      reaction_time: 0.15
+      overtake_threshold: 0.7
+      aggression: 0.4
+      error_rate: 0.05
+    expert:
+      target_speed_factor: 0.95
+      braking_distance_factor: 1.0
+      reaction_time: 0.05
+      overtake_threshold: 0.5
+      aggression: 0.7
+      error_rate: 0.01
+    aggressive:
+      target_speed_factor: 1.0
+      braking_distance_factor: 0.8
+      reaction_time: 0.02
+      overtake_threshold: 0.3
+      aggression: 0.9
+      error_rate: 0.02
+    defensive:
+      target_speed_factor: 0.8
+      braking_distance_factor: 1.5
+      reaction_time: 0.1
+      overtake_threshold: 0.8
+      aggression: 0.2
+      error_rate: 0.03
+
+# Rendering Configuration
+render:
+  # Screen resolution
+  width: 1280
+  height: 720
+  
+  # Camera
+  camera_smoothing: 0.1
+  camera_zoom: 1.0
+  min_zoom: 0.3
+  max_zoom: 3.0
+  
+  # Visual options
+  show_minimap: true
+  minimap_size: 200
+  minimap_position: "top-right"
+  show_racing_line: false
+  show_checkpoints: true
+  show_sensors: false
+  show_hitboxes: false
+  show_debug_overlay: false
+  
+  # Colors (RGB)
+  colors:
+    background: [30, 30, 40]
+    road: [50, 50, 50]
+    grass: [34, 139, 34]
+    line: [255, 255, 255]
+    checkpoint: [0, 255, 0]
+    start_finish: [255, 255, 0]
+    car_player: [0, 100, 255]
+    car_ai: [255, 100, 0]
+    car_npc: [200, 50, 50]
+    sensor_ray: [0, 255, 255, 128]
+    racing_line: [255, 255, 0, 128]
+
+# Telemetry Configuration
+telemetry:
+  enabled: true
+  log_frequency: 1  # Log every N steps
+  export_format: "json"  # "json", "csv", "both"
+  save_replays: true
+  replay_dir: "replays"
+  log_dir: "logs"
+  include_observations: false
+  include_actions: true
+  include_rewards: true
+  compression: false

@@ -1,0 +1,16 @@
+# Core dependencies
+numpy>=1.24.0
+gymnasium>=0.29.0
+pygame-ce>=2.5.0
+pyyaml>=6.0
+
+# Optional: for faster math (uncomment if available)
+# numba>=0.58.0
+
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Type checking (optional)
+# mypy>=1.5.0
+# types-pyyaml>=6.0.0
