@@ -404,9 +404,10 @@ class Renderer:
         
         # Rotate and draw car sprite
         if self.car_sprite:
-            # Tint the sprite
+            # Tint the sprite - convert color to tuple if needed
+            color_tuple = tuple(color[:3]) + (255,)
             tinted = self.car_sprite.copy()
-            tinted.fill(color[:3] + (255,), special_flags=pygame.BLEND_RGBA_MULT)
+            tinted.fill(color_tuple, special_flags=pygame.BLEND_RGBA_MULT)
             
             rotated = pygame.transform.rotate(tinted, angle_deg)
             rect = rotated.get_rect(center=pos)

@@ -391,7 +391,7 @@ class OneVFourMode(BaseRaceMode):
             opp_body = RigidBody(
                 mass=opp_config.mass,
                 width=opp_config.width,
-                length=opp_config.length,
+                height=opp_config.length,
                 material=PhysicsMaterial(friction=1.0, restitution=0.1)
             )
             self.physics_world.add_body(opp_body)
@@ -436,7 +436,7 @@ class AIVsAIMode(BaseRaceMode):
             veh_body = RigidBody(
                 mass=veh_config.mass,
                 width=veh_config.width,
-                length=veh_config.length,
+                height=veh_config.length,
                 material=PhysicsMaterial(friction=1.0, restitution=0.1)
             )
             self.physics_world.add_body(veh_body)
