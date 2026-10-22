@@ -126,3 +126,19 @@ def test_image_observations_fail_loudly_instead_of_returning_fake_data():
         assert "Image observations are not implemented" in str(exc)
     else:
         raise AssertionError("Unsupported image observations must not silently return zeros")
+
+
+def test_vehicle_presets_do_not_mutate_across_resets():
+    game_config = load_config()
+    config = TrainingConfig()
+    config.curriculum["enabled"] = True
+    env = RacingEnv(config, game_config)
+    try:
+        env.reset(seed=321)
+        first_speed = env.vehicle.config.top_speed
+        env.reset(seed=321)
+        second_speed = env.vehicle.config.top_speed
+        assert np.isclose(first_speed, second_speed)
+        assert np.isclose(first_speed, 45.0 * config.curriculum["stages"][0]["speed_multiplier"])
+    finally:
+        env.close()
