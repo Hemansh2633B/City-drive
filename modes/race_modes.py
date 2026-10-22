@@ -4,8 +4,10 @@
 Multi-car race modes with human/AI participants.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Union
 from dataclasses import dataclass
 from enum import Enum
 
