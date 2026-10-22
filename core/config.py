@@ -5,6 +5,8 @@ Loads and manages game configuration from YAML files with support for
 environment-specific overrides and validation.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
