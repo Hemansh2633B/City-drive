@@ -9,7 +9,7 @@ ENV_ID = "CityDrive-v0"
 if ENV_ID not in registry:
     register(
         id=ENV_ID,
-        entry_point="ai.training_env:RacingEnv",
+        entry_point="city_drive_rl:RacingEnv",
         order_enforce=True,
         disable_env_checker=False,
     )
