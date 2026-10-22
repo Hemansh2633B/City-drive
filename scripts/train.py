@@ -52,10 +52,10 @@ def parse_args():
     parser.add_argument("--theme",
                         choices=["asphalt", "desert", "snow", "grassland", "neon", "industrial", "dirt"],
                         default="asphalt", help="Visual/surface theme for generated tracks")
-    parser.add_argument("--complexity", type=float, default=0.35,
-                        help="Track shape complexity, from 0 to 1")
-    parser.add_argument("--road-width", type=float, default=12.0,
-                        help="Road width in simulation metres")
+    parser.add_argument("--complexity", type=float, default=None,
+                        help="Pin track shape complexity to 0-1 (otherwise curriculum controls it)")
+    parser.add_argument("--road-width", type=float, default=None,
+                        help="Pin road width to 8-16 metres (otherwise curriculum controls it)")
     parser.add_argument("--no-curriculum", action="store_true",
                         help="Keep track difficulty constant")
     parser.add_argument("--render", action="store_true",
@@ -90,8 +90,14 @@ def create_training_config(args) -> TrainingConfig:
     config.action_mode = ActionMode(args.action_mode)
     config.max_episode_steps = max(1, int(args.max_steps))
     config.track_theme = args.theme
-    config.track_complexity = min(1.0, max(0.0, float(args.complexity)))
-    config.road_width = max(8.0, min(16.0, float(args.road_width)))
+    config.track_complexity = (
+        None if args.complexity is None
+        else min(1.0, max(0.0, float(args.complexity)))
+    )
+    config.road_width = (
+        None if args.road_width is None
+        else max(8.0, min(16.0, float(args.road_width)))
+    )
     config.curriculum["enabled"] = not args.no_curriculum
     # Never inject NPCs/opponents into a single-agent learning task.
     for stage in config.curriculum.get("stages", []):
@@ -284,8 +290,15 @@ def run_ppo(args, training_config, game_config, output_dir, seed):
     print("City Drive | AI training")
     print(f"Seed: {args.seed} (normalized: {seed})")
     print(f"Agent: PPO | Observation: {args.obs_mode} | Action: {args.action_mode}")
-    print(f"Track: {args.theme} | Complexity: {training_config.track_complexity} | "
-          f"Road width: {training_config.road_width} m")
+    complexity_label = (
+        f"{training_config.track_complexity:.2f}"
+        if training_config.track_complexity is not None else "curriculum/default"
+    )
+    width_label = (
+        f"{training_config.road_width:.1f} m"
+        if training_config.road_width is not None else "curriculum/default"
+    )
+    print(f"Track: {args.theme} | Complexity: {complexity_label} | Road width: {width_label}")
     print(f"Timesteps: {args.timesteps:,} | Live viewer: {'on' if args.render else 'off'}")
     try:
         model.learn(
@@ -309,7 +322,9 @@ def main():
     args = parse_args()
     if args.timesteps < 1:
         raise SystemExit("--timesteps must be greater than zero")
-    if args.road_width < 8 or args.road_width > 16:
+    if args.complexity is not None and not 0.0 <= args.complexity <= 1.0:
+        raise SystemExit("--complexity must be between 0 and 1")
+    if args.road_width is not None and not 8 <= args.road_width <= 16:
         raise SystemExit("--road-width must be between 8 and 16 metres")
 
     output_dir = Path(args.output)
