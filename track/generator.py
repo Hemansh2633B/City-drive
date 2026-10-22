@@ -562,10 +562,19 @@ class TrackGenerator:
             if dist > max_checkpoint_gap:
                 errors.append(f"Checkpoint {i} to {next_cp.index} too far: {dist:.1f}m")
         
-        # Check boundaries don't self-intersect (simplified)
-        # Check spawn positions are valid
+        # Check spawn positions are valid and the single-agent spawn is on-road.
         if len(track.start_positions) < 1:
             errors.append("No valid spawn positions")
+        elif len(track.centerline) >= 2:
+            spawn = track.start_positions[0]
+            spawn_distance = min(
+                point_line_distance(spawn, track.centerline[i], track.centerline[i + 1])
+                for i in range(len(track.centerline) - 1)
+            )
+            if spawn_distance > track.road_width * 0.5:
+                errors.append(
+                    f"Training spawn outside road: {spawn_distance:.2f}m from centerline"
+                )
         
         track.validation_errors = errors
         return len(errors) == 0
