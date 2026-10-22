@@ -353,6 +353,10 @@ def main():
 
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = output_dir / "metrics.csv"
+    if not args.resume and metrics_path.exists():
+        # A fresh experiment should not silently mix its curves with an older run.
+        metrics_path.unlink()
     game_config = load_config()
     training_config = create_training_config(args)
     seed = parse_seed(args.seed)
