@@ -21,6 +21,11 @@ def test_checkpoint_uses_forward_and_lateral_distances():
     assert checkpoint.contains_point(vec2(1.0, 0.0))
     assert not checkpoint.contains_point(vec2(-1.0, 0.0))
     assert not checkpoint.contains_point(vec2(1.0, 6.0))
+    assert checkpoint.crossed_by(vec2(-1.0, 0.0), vec2(1.0, 0.0))
+    assert not checkpoint.crossed_by(vec2(1.0, 0.0), vec2(-1.0, 0.0))
+    assert not checkpoint.crossed_by(vec2(-1.0, 6.0), vec2(1.0, 6.0))
+    # Being well in front of the gate is not a new crossing.
+    assert not checkpoint.crossed_by(vec2(2.0, 0.0), vec2(3.0, 0.0))
 
 
 def test_seeded_tracks_are_valid_closed_loops():
