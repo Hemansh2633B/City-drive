@@ -5,7 +5,7 @@ Single-car AI training environment with curriculum learning support.
 """
 
 import numpy as np
-from typing import Optional, Dict, Any, List
+from typing import Union, Optional, Dict, Any, List
 from dataclasses import dataclass
 
 from core.config import SimulationContext, Config
@@ -306,4 +306,3 @@ class TrainingMode:
                     writer.writerow([i, reward, length, len(laps), best_lap])
 
 
-from typing import Union
