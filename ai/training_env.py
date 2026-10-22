@@ -35,6 +35,11 @@ class ActionMode(Enum):
     DISCRETE = "discrete"
 
 
+# The vector component has a stable size regardless of the selected observation
+# mode. Combined observations append sensor values to exactly this many values.
+VECTOR_OBSERVATION_SIZE = 80
+
+
 @dataclass
 class TrainingConfig:
     """Configuration for training environment."""
@@ -200,8 +205,7 @@ class RacingEnv(gym.Env):
         # Observation space - will be sized properly in reset
         # For now, create a placeholder
         if self.train_config.observation_mode == ObservationMode.VECTOR:
-            # Approximate size: vehicle state (~30) + track info (~10) + opponents (~20 each)
-            obs_size = 80
+            obs_size = VECTOR_OBSERVATION_SIZE
             self.observation_space = spaces.Box(
                 low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
@@ -219,7 +223,7 @@ class RacingEnv(gym.Env):
             )
         else:  # COMBINED
             num_rays = self.train_config.sensor_config.get('num_rays', 16)
-            obs_size = 80 + num_rays + 6
+            obs_size = VECTOR_OBSERVATION_SIZE + num_rays + 6
             self.observation_space = spaces.Box(
                 low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
@@ -685,7 +689,7 @@ class RacingEnv(gym.Env):
         
         # Pad to fixed size if needed
         obs = np.array(obs, dtype=np.float32)
-        expected_size = self.observation_space.shape[0]
+        expected_size = VECTOR_OBSERVATION_SIZE
         if len(obs) < expected_size:
             obs = np.pad(obs, (0, expected_size - len(obs)))
         elif len(obs) > expected_size:
