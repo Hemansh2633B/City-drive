@@ -449,15 +449,18 @@ class RacingEnv(gym.Env):
         reward = 0.0
         state = self.vehicle.state
         
+        # Keep the previous position for progress and exact checkpoint crossings.
+        previous_position = self.last_position.copy()
+
         # Progress reward
-        progress = vec2_length(vec2_sub(state.position, self.last_position))
+        progress = vec2_length(vec2_sub(state.position, previous_position))
         if state.forward_speed > 0:
             reward += r['progress_per_meter'] * progress
         else:
             reward += r['backward_penalty'] * progress
-        
+
         self.last_position = state.position.copy()
-        
+
         # Speed bonus
         if state.forward_speed > 5.0:
             reward += r['speed_bonus_factor'] * state.forward_speed
@@ -466,7 +469,7 @@ class RacingEnv(gym.Env):
         next_cp_idx = (self.last_checkpoint + 1) % len(self.track.checkpoints)
         next_cp = self.track.checkpoints[next_cp_idx]
         
-        if next_cp.contains_point(state.position):
+        if next_cp.crossed_by(previous_position, state.position):
             if next_cp_idx == 0 and self.checkpoints_crossed > 0:
                 # Completed a lap
                 self.laps_completed += 1
