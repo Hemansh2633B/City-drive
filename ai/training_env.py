@@ -166,6 +166,7 @@ class RacingEnv(gym.Env):
         self._render_surface = None
         self._render_font = None
         self._render_small_font = None
+        self._render_clock = None
 
         # Initialize spaces (will be finalized in reset)
         self._define_spaces()
@@ -842,8 +843,12 @@ class RacingEnv(gym.Env):
                 if event.type == pygame.QUIT:
                     pygame.display.quit()
                     self._render_surface = None
+                    self.render_mode = None
                     return None
             pygame.display.flip()
+            if self._render_clock is None:
+                self._render_clock = pygame.time.Clock()
+            self._render_clock.tick(60)
             return None
 
         pixels = pygame.surfarray.array3d(surface)
@@ -858,6 +863,7 @@ class RacingEnv(gym.Env):
                     pygame.display.quit()
             finally:
                 self._render_surface = None
+                self._render_clock = None
 
     def get_telemetry(self) -> List[Dict]:
         """Get collected telemetry."""
