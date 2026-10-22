@@ -86,3 +86,43 @@ def test_sensor_and_combined_observation_spaces_match_outputs():
             assert env.action_space.shape == (3,)
         finally:
             env.close()
+
+
+def test_registered_gymnasium_environment_and_checker():
+    import gymnasium as gym
+    import city_drive_rl
+    from gymnasium.utils.env_checker import check_env
+
+    assert city_drive_rl.ENV_ID == "CityDrive-v0"
+    env = gym.make(city_drive_rl.ENV_ID)
+    try:
+        observation, info = env.reset(seed=2026)
+        assert env.observation_space.contains(observation)
+        assert info["track_valid"]
+
+        observation, reward, terminated, truncated, info = env.step(
+            env.action_space.sample()
+        )
+        assert env.observation_space.contains(observation)
+        assert np.isfinite(reward)
+        assert isinstance(terminated, bool)
+        assert isinstance(truncated, bool)
+        assert info["track_valid"]
+    finally:
+        env.close()
+
+    raw_env = city_drive_rl.RacingEnv()
+    try:
+        check_env(raw_env, skip_render_check=True)
+    finally:
+        raw_env.close()
+
+
+def test_image_observations_fail_loudly_instead_of_returning_fake_data():
+    config = TrainingConfig(observation_mode=ObservationMode.IMAGE)
+    try:
+        RacingEnv(config=config, game_config=load_config())
+    except ValueError as exc:
+        assert "Image observations are not implemented" in str(exc)
+    else:
+        raise AssertionError("Unsupported image observations must not silently return zeros")
