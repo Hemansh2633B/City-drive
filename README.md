@@ -1,304 +1,128 @@
-# AI Racing Simulator
+# City Drive RL
 
-A 2D top-down racing simulator designed for AI agent training, reinforcement learning research, and autonomous driving benchmarking.
+City Drive is a 2D top-down driving environment built for **single-agent reinforcement learning**. Its primary workflow is training and evaluating driving policies—not player-versus-player racing.
 
-## Features
+## Focused feature set
 
-- **Deterministic Simulation** - Same seed always produces identical results for reproducible experiments
-- **AI Training Ready** - Gymnasium-compatible environment with vector/sensor/image observations
-- **Procedural Tracks** - Seed-based generation with validation (straights, hairpins, chicanes, S-curves)
-- **Vehicle Physics** - Pacejka-like tire model, drift dynamics, surface-dependent grip
-- **Multiple Game Modes** - Training (single car), 1v1, 1v4 races
-- **Scripted NPC AI** - 6 difficulty profiles (Beginner to Expert, Aggressive, Defensive)
-- **Curriculum Learning** - 4 difficulty stages that progressively increase complexity
-- **Headless & GUI** - Fast headless training or visual pygame rendering
-- **Telemetry & Replays** - JSON/CSV export, exact replay capability
+- **Gymnasium environment** with vector, ray-sensor, and combined observations.
+- **PPO training** through Stable-Baselines3, with resume-from-checkpoint support.
+- **Seeded procedural circuits**: repeat a seed to reproduce the same course.
+- **Course validation**: generated centerlines form closed, non-self-intersecting radial loops; checkpoint spacing and spawn positions are validated.
+- **Live training viewer** showing the map, learning agent, speed, accumulated reward, checkpoint count, lap completion, and seed.
+- **Training records**: episode reward, rolling reward, episode length, laps/checkpoints, and map validity are written to CSV.
+- **Checkpoints and experiment config** are saved to disk so runs can be reproduced or resumed.
+- **Headless mode** is available by default for faster training. The viewer is optional.
 
-## Quick Start
+## Install
 
-### Installation
+Python 3.10 or newer is recommended.
 
 ```bash
-git clone https://github.com/yourusername/ai-racing-simulator.git
-cd ai-racing-simulator
+git clone https://github.com/Hemansh2633B/City-drive.git
+cd City-drive
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate       # Linux/macOS
+# .venv\Scripts\activate      # Windows
 
-# Install dependencies
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Run a Race (with GUI)
+## Train an agent
+
+Start a reproducible PPO run with a live viewer:
 
 ```bash
-# 1v1 race against AI
-python scripts/game.py --mode 1v1 --seed 12345
-
-# 1v4 race
-python scripts/game.py --mode 1v4 --seed "daily-race-001"
+python main.py train --seed "research-run-01" --timesteps 250000 --render
 ```
 
-### Train an AI Agent (Headless)
+Run headless for speed:
 
 ```bash
-# Random agent baseline
-python scripts/train.py --mode training --seed 12345 --episodes 100
-
-# With custom agent
-python scripts/train.py --agent path/to/model.zip --episodes 1000
+python main.py train --seed 12345 --timesteps 100000
 ```
 
-### Evaluate Agents
+The trainer uses PPO by default. It writes:
+
+```text
+training_runs/city_drive/
+├── checkpoints/        # periodic PPO checkpoints
+├── metrics.csv         # one row per completed episode
+├── run_config.json     # settings and normalized seed
+└── final_model.zip     # final trained model
+```
+
+To continue from a saved checkpoint:
 
 ```bash
-# Benchmark on standard seeds
-python scripts/evaluate.py --agent random --seeds 1 2 3 4 5
-
-# Evaluate trained model
-python scripts/evaluate.py --agent path/to/model.zip --num-seeds 20
+python main.py train \
+  --resume training_runs/city_drive/checkpoints/city_drive_ppo_25000_steps.zip \
+  --seed 12345 --timesteps 100000
 ```
 
-## Controls (GUI Mode)
-
-| Key | Action |
-|-----|--------|
-| ↑ / W | Throttle |
-| ↓ / S | Brake / Reverse |
-| ← / A | Steer Left |
-| → / D | Steer Right |
-| Shift / Space | Boost (if available) |
-| ESC | Pause Menu |
-| F1 | Toggle Debug Overlay |
-| F2 | Toggle Racing Line |
-| F3 | Toggle Sensors |
-| F4 | Toggle Hitboxes |
-| F5 | Toggle Minimap |
-| + / - | Zoom Camera |
-
-## Game Modes
-
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| **Training** | Single car, no opponents, configurable rewards | RL training, curriculum learning |
-| **1v1** | Player vs 1 AI opponent | Human vs AI, AI vs AI testing |
-| **1v4** | Player vs 4 AI opponents | Competitive racing, overtaking logic |
-| **AI vs AI** | 5 AI cars racing | Benchmarking, tournaments |
-
-## AI Training
-
-### Observation Modes
-
-```python
-from ai.training_env import RacingEnv, TrainingConfig, ObservationMode
-
-config = TrainingConfig(
-    observation_mode=ObservationMode.VECTOR,    # 80-dim state vector
-    # observation_mode=ObservationMode.SENSOR,   # 16 raycasts + state
-    # observation_mode=ObservationMode.IMAGE,    # 84x84 top-down camera
-    # observation_mode=ObservationMode.COMBINED, # Vector + Sensor
-)
-```
-
-### Action Spaces
-
-```python
-# Continuous: [steering, throttle, brake] in [-1,1] x [0,1] x [0,1]
-# Discrete: 5 actions (LEFT, RIGHT, ACCELERATE, BRAKE, NONE)
-```
-
-### Reward Configuration
-
-```python
-config = TrainingConfig(
-    rewards={
-        'progress_per_meter': 0.1,
-        'checkpoint_bonus': 10.0,
-        'lap_bonus': 100.0,
-        'collision_penalty': -5.0,
-        'offroad_penalty_per_second': -2.0,
-        # ... more rewards
-    }
-)
-```
-
-### Curriculum Learning
-
-4 built-in stages that auto-advance:
-
-| Stage | Complexity | Road Width | Speed | Opponents |
-|-------|------------|------------|-------|-----------|
-| Easy | 0.2 | 1.5x | 0.6x | 0 |
-| Medium | 0.4 | 1.2x | 0.8x | 1 |
-| Hard | 0.6 | 1.0x | 1.0x | 3 |
-| Expert | 0.8 | 0.8x | 1.2x | 4 |
-
-## Track Generation
-
-Tracks are generated from seeds (integer or string):
-
-```python
-from track.generator import TrackGenerator, TrackGeneratorConfig
-from core.random import DeterministicRNG
-
-config = TrackGeneratorConfig()
-rng = DeterministicRNG(12345)
-generator = TrackGenerator(config, rng)
-
-track = generator.generate(
-    seed=12345,           # or "my-custom-seed"
-    theme="asphalt",      # asphalt, desert, snow, grassland, neon, industrial, dirt
-    complexity=0.5,       # 0.0 (simple) to 1.0 (complex)
-    road_width=12.0       # meters
-)
-```
-
-**Themes:** asphalt, desert, snow, grassland, neon, industrial, dirt  
-**Benchmark Seeds:** 1, 42, 123, 456, 789, 1000-1004, "daily-race-001", etc.
-
-## Project Structure
-
-```
-race/
-├── core/           # Deterministic RNG, config, math, physics
-├── track/          # Procedural track generation & validation
-├── vehicles/       # Vehicle physics, presets
-├── ai/             # Training env (Gymnasium), NPC AI
-├── modes/          # Training, 1v1, 1v4 race modes
-├── ui/             # Pygame renderer, menus, HUD
-├── telemetry/      # JSON/CSV replay system
-├── scripts/        # CLI entry points
-├── configs/        # YAML configuration
-├── tests/          # 25 determinism tests
-└── docs/           # Documentation
-```
-
-## Configuration
-
-Edit `configs/default.yaml` or create custom configs:
-
-```yaml
-game:
-  fixed_dt: 0.016666666666666666  # 60 Hz physics
-  max_episode_steps: 10000
-
-vehicle:
-  presets:
-    balanced:
-      top_speed: 45.0
-      acceleration: 12.0
-      grip: 1.0
-    # ... speedster, gripper, drift_king, rookie
-
-training:
-  curriculum:
-    enabled: true
-    # ... stages
-
-render:
-  width: 1280
-  height: 720
-  show_minimap: true
-  show_debug_overlay: false
-```
-
-## Reproducibility
-
-Every race is fully deterministic. Same seed = identical results:
+To smoke-test the environment without training a neural policy:
 
 ```bash
-# These produce EXACTLY the same race
-python scripts/game.py --seed 12345
-python scripts/game.py --seed 12345
+python main.py train --agent random --seed "smoke-test" --timesteps 20000 --render
 ```
 
-Replays include complete state for exact reproduction.
+The random baseline is only for validating the environment and viewer; it does not learn.
 
-## Running Tests
+## Track and environment settings
 
 ```bash
-# All tests
-python -m pytest tests/ -v
-
-# Specific test class
-python -m pytest tests/test_determinism.py::TestTrackGeneration -v
+python main.py train \
+  --seed "curvy-map-07" \
+  --theme asphalt \
+  --complexity 0.55 \
+  --road-width 12 \
+  --obs-mode vector \
+  --action-mode continuous \
+  --timesteps 300000
 ```
 
-## Extending
+- **Seed** accepts an integer or text. Reusing it with the same configuration reproduces the initial track and random stream.
+- **Complexity** is clamped to `0.0–1.0`. Seeded shape harmonics and phases vary each closed course while keeping the radius positive, avoiding self-intersections from track closure.
+- **Road width** is set in simulation metres; the supported range is 8–16 m.
+- **Observations**: `vector` (default), `sensor` (ray distances plus vehicle state), or `combined`.
+- **Actions**: `continuous` (steering, throttle, brake) or `discrete`.
+- **Curriculum** changes difficulty over time without adding NPCs or opponent cars.
 
-### Add Vehicle Preset
-```python
-# vehicles/presets.py
-VEHICLE_PRESETS["my_car"] = VehicleConfig(
-    top_speed=55.0,
-    acceleration=13.0,
-    grip=1.1,
-    # ...
-)
+For faster iteration, lower `--timesteps` and use `--no-curriculum`. To slow down or speed up PPO, change `--learning-rate`, `--n-steps`, and `--batch-size`.
+
+## View training metrics
+
+Every completed episode appends a row to `metrics.csv`. Columns include total reward, rolling mean reward, step count, checkpoints crossed, laps completed, track validity, collision count, and off-road time.
+
+Optional TensorBoard logging:
+
+```bash
+pip install tensorboard
+python main.py train --tensorboard --timesteps 250000
+tensorboard --logdir training_runs/city_drive/tensorboard
 ```
 
-### Add AI Profile
-```python
-# ai/npc_ai.py
-AI_PROFILES[AIProfile.MY_PROFILE] = AIProfileConfig(
-    target_speed_factor=0.85,
-    aggression=0.6,
-    # ...
-)
+## Test
+
+```bash
+python main.py test
+# or
+pytest tests/ -q
 ```
 
-### Custom Track Theme
-```yaml
-# configs/default.yaml
-track:
-  themes:
-    my_theme:
-      surface_friction: 0.95
-      offroad_friction: 0.28
-      color_road: [60, 60, 60]
-      # ...
+## Project layout
+
+```text
+ai/             Gymnasium training environment
+core/           Physics, math, deterministic random streams, config
+track/          Seeded course generation, validation, checkpoints
+vehicles/       Vehicle dynamics and presets
+scripts/train.py PPO trainer, checkpoints, metrics and live rendering
+scripts/evaluate.py
+ui/             Interactive viewer/menu components
+telemetry/      Telemetry and replay support
+tests/          Determinism and RL environment regression tests
 ```
 
-## Requirements
-
-- Python 3.10+
-- numpy >= 1.24
-- gymnasium >= 0.29
-- pygame-ce >= 2.5 (for GUI)
-- pyyaml >= 6.0
-
-Optional:
-- numba >= 0.58 (faster math)
-- stable-baselines3 >= 2.0 (RL algorithms)
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
-## Citation
-
-If you use this simulator in research, please cite:
-
-```bibtex
-@software{ai_racing_simulator,
-  title = {AI Racing Simulator},
-  author = {AI Racing Simulator Contributors},
-  year = {2025},
-  url = {https://github.com/yourusername/ai-racing-simulator}
-}
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-## Support
-
-- Check [documentation](docs/README.md) for detailed guides
-- Review [troubleshooting](docs/README.md#troubleshooting) for common issues
-- Open an issue for bugs or feature requests
+The main launcher exposes `train`, `eval`, and `test`. Competitive race modes are not part of the primary workflow.
