@@ -588,19 +588,36 @@ class RacingEnv(gym.Env):
         return False, False
     
     def _get_observation(self) -> np.ndarray:
-        """Get current observation based on mode."""
+        """Return a finite float32 observation matching the declared space."""
         mode = self.train_config.observation_mode
-        
+
         if mode == ObservationMode.VECTOR:
-            return self._get_vector_observation()
+            observation = self._get_vector_observation()
         elif mode == ObservationMode.SENSOR:
-            return self._get_sensor_observation()
+            observation = self._get_sensor_observation()
         elif mode == ObservationMode.IMAGE:
-            return self._get_image_observation()
+            # Rejected during init until a real image renderer is implemented.
+            observation = self._get_image_observation()
         else:  # COMBINED
-            vec_obs = self._get_vector_observation()
-            sensor_obs = self._get_sensor_observation()
-            return np.concatenate([vec_obs, sensor_obs]).astype(np.float32)
+            observation = np.concatenate([
+                self._get_vector_observation(),
+                self._get_sensor_observation()
+            ])
+
+        observation = np.asarray(observation, dtype=np.float32)
+        expected_shape = self.observation_space.shape
+        if observation.shape != expected_shape:
+            raise RuntimeError(
+                f"{mode.value} observation shape {observation.shape} does not "
+                f"match declared space {expected_shape}"
+            )
+
+        # Physical simulations can occasionally produce non-finite intermediate
+        # values (for example after extreme steering). Never leak NaN/Inf into
+        # PPO or other Gymnasium agents: normalize those values to bounded sentinels.
+        return np.nan_to_num(
+            observation, copy=False, nan=0.0, posinf=1.0, neginf=-1.0
+        )
     
     def _get_vector_observation(self) -> np.ndarray:
         """Get vector observation."""
