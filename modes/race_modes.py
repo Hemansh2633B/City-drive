@@ -5,7 +5,7 @@ Multi-car race modes with human/AI participants.
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Any, Tuple
+from typing import Union, List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
@@ -477,4 +477,3 @@ def create_race_mode(mode: RaceMode, config: RaceModeConfig, game_config: Config
         raise ValueError(f"Unknown race mode: {mode}")
 
 
-from typing import Union

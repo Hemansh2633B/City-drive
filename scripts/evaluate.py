@@ -12,7 +12,7 @@ import numpy as np
 import json
 import csv
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -21,7 +21,6 @@ from core.config import load_config
 from ai.training_env import RacingEnv, TrainingConfig, ObservationMode, ActionMode, make_racing_env
 
 
-# Benchmark seeds for consistent evaluation
 BENCHMARK_SEEDS = [
     1, 42, 123, 456, 789,
     1000, 1001, 1002, 1003, 1004,
@@ -52,7 +51,6 @@ class HeuristicAgent:
         self.action_space = action_space
     
     def act(self, obs):
-        # Very simple heuristic
         if hasattr(self.action_space, 'shape'):
             return np.zeros(self.action_space.shape, dtype=np.float32)
         return 0
@@ -65,7 +63,6 @@ def create_agent(agent_type: str, env: RacingEnv):
     elif agent_type == "heuristic":
         return HeuristicAgent(env.action_space)
     else:
-        # Try to load a trained model
         try:
             from stable_baselines3 import PPO
             model = PPO.load(agent_type)
@@ -112,7 +109,6 @@ def run_episode(env: RacingEnv, agent, seed: Optional[Union[int, str]] = None,
         if render:
             env.render()
         
-        # Track lap times
         if 'lap_times' in info and info['lap_times']:
             lap_times = info['lap_times']
         
@@ -142,7 +138,6 @@ def evaluate_agent(agent, seeds: List[Union[int, str]], config: TrainingConfig,
     for seed in seeds:
         print(f"Evaluating on seed: {seed}")
         
-        # Create env for this seed
         env = make_racing_env(config, game_config, render_mode='human' if render else None)
         
         try:
@@ -154,7 +149,6 @@ def evaluate_agent(agent, seeds: List[Union[int, str]], config: TrainingConfig,
         finally:
             env.close()
     
-    # Aggregate statistics
     rewards = [r['reward'] for r in results]
     laps = [r['laps_completed'] for r in results]
     lap_times = []
@@ -167,19 +161,19 @@ def evaluate_agent(agent, seeds: List[Union[int, str]], config: TrainingConfig,
     
     summary = {
         'num_seeds': len(seeds),
-        'mean_reward': np.mean(rewards),
-        'std_reward': np.std(rewards),
-        'min_reward': np.min(rewards),
-        'max_reward': np.max(rewards),
-        'mean_laps': np.mean(laps),
-        'max_laps': np.max(laps),
-        'completion_rate': np.mean(completed),
-        'mean_final_position': np.mean(positions),
-        'win_rate': np.mean([p == 1 for p in positions]),
-        'mean_collisions': np.mean(collisions),
-        'mean_offroad_time': np.mean(offroad),
-        'mean_lap_time': np.mean(lap_times) if lap_times else 0,
-        'best_lap_time': np.min(lap_times) if lap_times else float('inf'),
+        'mean_reward': float(np.mean(rewards)),
+        'std_reward': float(np.std(rewards)),
+        'min_reward': float(np.min(rewards)),
+        'max_reward': float(np.max(rewards)),
+        'mean_laps': float(np.mean(laps)),
+        'max_laps': float(np.max(laps)),
+        'completion_rate': float(np.mean(completed)),
+        'mean_final_position': float(np.mean(positions)),
+        'win_rate': float(np.mean([p == 1 for p in positions])),
+        'mean_collisions': float(np.mean(collisions)),
+        'mean_offroad_time': float(np.mean(offroad)),
+        'mean_lap_time': float(np.mean(lap_times)) if lap_times else 0.0,
+        'best_lap_time': float(np.min(lap_times)) if lap_times else float('inf'),
         'results': results
     }
     
@@ -187,7 +181,6 @@ def evaluate_agent(agent, seeds: List[Union[int, str]], config: TrainingConfig,
 
 
 def parse_args():
-    import argparse
     parser = argparse.ArgumentParser(description="Evaluate AI Racing Agent")
     
     parser.add_argument("--agent", type=str, default="random",
@@ -221,10 +214,8 @@ def parse_args():
 def main():
     args = parse_args()
     
-    # Load config
     config = load_config(args.config)
     
-    # Determine seeds
     if args.seeds:
         seeds = []
         for s in args.seeds:
@@ -235,26 +226,22 @@ def main():
     else:
         seeds = BENCHMARK_SEEDS[:args.num_seeds]
     
-    # Create training config
     train_config = TrainingConfig()
     train_config.observation_mode = ObservationMode(args.obs_mode)
     train_config.action_mode = ActionMode(args.action_mode)
     train_config.max_episode_steps = args.max_steps
     
-    # Create dummy env to get agent
     game_config = config
     env = make_racing_env(train_config, game_config)
     agent = create_agent(args.agent, env)
     env.close()
     
-    # Run evaluation
     print(f"Evaluating {args.agent} on {len(seeds)} seeds...")
     print(f"Seeds: {seeds}")
     
     summary = evaluate_agent(agent, seeds, train_config, game_config, 
                            render=args.render, max_steps=args.max_steps)
     
-    # Print summary
     print("\n=== EVALUATION SUMMARY ===")
     print(f"Seeds tested: {summary['num_seeds']}")
     print(f"Mean reward: {summary['mean_reward']:.2f} ± {summary['std_reward']:.2f}")
@@ -268,15 +255,12 @@ def main():
     print(f"Mean lap time: {summary['mean_lap_time']:.2f}s")
     print(f"Best lap time: {summary['best_lap_time']:.2f}s")
     
-    # Save results
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # JSON
     with open(output_dir / "evaluation.json", 'w') as f:
         json.dump(summary, f, indent=2, default=str)
     
-    # CSV
     with open(output_dir / "evaluation.csv", 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['seed', 'reward', 'steps', 'laps', 'best_lap', 'position', 'completed', 'collisions', 'offroad'])
@@ -293,5 +277,4 @@ def main():
 
 
 if __name__ == "__main__":
-    from typing import Union
     sys.exit(main())

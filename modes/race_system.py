@@ -5,7 +5,7 @@ Core race logic: lap tracking, checkpoint validation, position ranking, race sta
 """
 
 import numpy as np
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Union, List, Dict, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from core.math import Vec2, vec2, vec2_sub, vec2_length, vec2_normalize, vec2_dot
@@ -433,5 +433,4 @@ class RaceManager:
         return None
 
 
-from typing import Union
 from core.math import vec2

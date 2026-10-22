@@ -7,7 +7,7 @@ Handles recording, exporting, and replaying race data.
 import json
 import csv
 import os
-from typing import List, Dict, Any, Optional
+from typing import Union, List, Dict, Any, Optional
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
@@ -436,4 +436,3 @@ class ReplayPlayer:
         return ghost
 
 
-from typing import Union

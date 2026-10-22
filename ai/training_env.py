@@ -158,36 +158,32 @@ class RacingEnv(gym.Env):
         self.telemetry_buffer: List[Dict] = []
         self.telemetry_enabled = True
         
-        # Initialize spaces (will be finalized in reset)
+        # Initialize spaces
         self._define_spaces()
     
     def _define_spaces(self) -> None:
         """Define observation and action spaces."""
         # Action space
         if self.train_config.action_mode == ActionMode.CONTINUOUS:
-            # steering [-1, 1], throttle [0, 1], brake [0, 1]
             self.action_space = spaces.Box(
                 low=np.array([-1.0, 0.0, 0.0], dtype=np.float32),
                 high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
                 dtype=np.float32
             )
         else:
-            # Discrete: 0=left, 1=right, 2=accelerate, 3=brake, 4=none
             self.action_space = spaces.Discrete(5)
         
-        # Observation space - will be sized properly in reset
-        # For now, create a placeholder
+        # Observation space
         if self.train_config.observation_mode == ObservationMode.VECTOR:
-            # Approximate size: vehicle state (~30) + track info (~10) + opponents (~20 each)
             obs_size = 80
             self.observation_space = spaces.Box(
                 low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
         elif self.train_config.observation_mode == ObservationMode.SENSOR:
             num_rays = self.train_config.sensor_config.get('num_rays', 16)
-            obs_size = num_rays + 10  # rays + vehicle state
+            obs_size = num_rays + 6
             self.observation_space = spaces.Box(
-                low=0.0, high=1.0, shape=(obs_size,), dtype=np.float32
+                low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
         elif self.train_config.observation_mode == ObservationMode.IMAGE:
             h, w = self.train_config.image_resolution
@@ -197,7 +193,7 @@ class RacingEnv(gym.Env):
             )
         else:  # COMBINED
             num_rays = self.train_config.sensor_config.get('num_rays', 16)
-            obs_size = 80 + num_rays
+            obs_size = 80 + num_rays + 6
             self.observation_space = spaces.Box(
                 low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
@@ -206,7 +202,6 @@ class RacingEnv(gym.Env):
         """Reset environment for new episode."""
         super().reset(seed=seed)
         
-        # Use provided seed or generate one
         if seed is not None:
             episode_seed = seed
         elif options and 'seed' in options:
@@ -214,7 +209,6 @@ class RacingEnv(gym.Env):
         else:
             episode_seed = self.np_random.integers(0, 2**31 - 1)
         
-        # Apply curriculum if enabled
         if self.train_config.curriculum.get('enabled', False):
             stage = self.train_config.curriculum['stages'][self.curriculum_stage]
             complexity = stage['complexity']
@@ -227,17 +221,13 @@ class RacingEnv(gym.Env):
             speed_mult = 1.0
             max_opponents = 0
         
-        # Create simulation context
         if self.game_config is None:
             from core.config import load_config
             self.game_config = load_config()
         
         self.sim_context = SimulationContext(self.game_config, episode_seed)
-        
-        # Create physics world
         self.physics_world = PhysicsWorld(self.game_config, self.sim_context.get_rng('physics'))
         
-        # Generate track
         track_rng = self.sim_context.get_rng('track')
         track_gen_config = TrackGeneratorConfig()
         self.track_generator = TrackGenerator(track_gen_config, track_rng)
@@ -249,7 +239,6 @@ class RacingEnv(gym.Env):
             road_width=self.game_config.track.min_road_width * road_width_mult
         )
         
-        # Create player vehicle
         vehicle_rng = self.sim_context.get_rng('vehicle')
         vehicle_config = get_vehicle_preset("balanced")
         vehicle_config.top_speed *= speed_mult
@@ -262,20 +251,17 @@ class RacingEnv(gym.Env):
             material=PhysicsMaterial(friction=1.0, restitution=0.1)
         )
         self.physics_world.add_body(self.vehicle_body)
-        
         self.vehicle = Vehicle(vehicle_config, self.vehicle_body, vehicle_rng)
         
-        # Spawn at start position
         spawn_pos, spawn_angle = self.track.get_spawn_position(0)
         self.vehicle.reset(spawn_pos, spawn_angle)
         
-        # Create opponents if needed
         self.opponents = []
         self.opponent_bodies = []
         for i in range(min(max_opponents, 4)):
             opp_rng = self.sim_context.get_rng(f'opponent_{i}')
             opp_config = get_vehicle_preset("balanced")
-            opp_config.top_speed *= speed_mult * 0.9  # Slightly slower
+            opp_config.top_speed *= speed_mult * 0.9
             opp_config.acceleration *= speed_mult * 0.9
             
             opp_body = RigidBody(
@@ -285,7 +271,6 @@ class RacingEnv(gym.Env):
                 material=PhysicsMaterial(friction=1.0, restitution=0.1)
             )
             self.physics_world.add_body(opp_body)
-            
             opp_vehicle = Vehicle(opp_config, opp_body, opp_rng)
             
             spawn_pos, spawn_angle = self.track.get_spawn_position(i + 1)
@@ -294,7 +279,6 @@ class RacingEnv(gym.Env):
             self.opponents.append(opp_vehicle)
             self.opponent_bodies.append(opp_body)
         
-        # Reset episode state
         self.current_step = 0
         self.episode_reward = 0.0
         self.last_checkpoint = 0
@@ -309,22 +293,19 @@ class RacingEnv(gym.Env):
         self.lap_times = []
         self.telemetry_buffer = []
         
-        # Get initial observation
         observation = self._get_observation()
         info = self._get_info()
         
         return observation, info
     
-    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: Union[np.ndarray, int]) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """Execute one environment step."""
-        # Parse action
+        boost = False
         if self.train_config.action_mode == ActionMode.CONTINUOUS:
             steering = float(np.clip(action[0], -1.0, 1.0))
             throttle = float(np.clip(action[1], 0.0, 1.0))
             brake = float(np.clip(action[2], 0.0, 1.0))
-            boost = False
         else:
-            # Discrete actions
             steering = 0.0
             throttle = 0.0
             brake = 0.0
@@ -336,46 +317,35 @@ class RacingEnv(gym.Env):
                 throttle = 1.0
             elif action == 3:  # Brake
                 brake = 1.0
-            # action == 4: None (coast)
         
-        # Apply input to vehicle
         self.vehicle.set_input(throttle, brake, steering, boost)
         
-        # Step physics
         dt = self.sim_context.dt
         collisions = self.physics_world.step(dt)
         
-        # Update vehicle state
         surface_type, on_road = self._get_surface_at_position(self.vehicle.state.position)
         self.vehicle.step(dt, surface_type, on_road)
         
-        # Update opponents (simple AI for now)
         for opp in self.opponents:
             opp_surface, opp_on_road = self._get_surface_at_position(opp.state.position)
             opp.step(dt, opp_surface, opp_on_road)
         
-        # Process collisions
         for col in collisions:
             if col.body_a == self.vehicle_body.id or col.body_b == self.vehicle_body.id:
                 self.collision_count += 1
         
-        # Calculate reward
         reward = self._calculate_reward()
         self.episode_reward += reward
         
-        # Check termination
         terminated, truncated = self._check_termination()
         
-        # Update episode state
         self.current_step += 1
         self.sim_context.advance_step()
         self.current_lap_time += dt
         
-        # Log telemetry
         if self.telemetry_enabled and self.current_step % self.game_config.telemetry.log_frequency == 0:
-            self._log_telemetry(action, reward)
+            self._log_telemetry(np.array(action) if isinstance(action, (list, tuple, np.ndarray)) else np.array([action]), reward)
         
-        # Get observation and info
         observation = self._get_observation()
         info = self._get_info()
         
@@ -386,17 +356,14 @@ class RacingEnv(gym.Env):
         if self.track is None:
             return "asphalt", True
         
-        # Simple check: distance to centerline
         min_dist = float('inf')
         for i in range(len(self.track.centerline) - 1):
-            # Distance to segment
             from core.math import point_line_distance
             dist = point_line_distance(position, self.track.centerline[i], self.track.centerline[i + 1])
             min_dist = min(min_dist, dist)
         
         half_width = self.track.road_width * 0.5
-        on_road = min_dist <= half_width * 1.1  # Small margin
-        
+        on_road = min_dist <= half_width * 1.1
         return self.track.theme, on_road
     
     def _calculate_reward(self) -> float:
@@ -405,7 +372,6 @@ class RacingEnv(gym.Env):
         reward = 0.0
         state = self.vehicle.state
         
-        # Progress reward
         progress = vec2_length(vec2_sub(state.position, self.last_position))
         if state.forward_speed > 0:
             reward += r['progress_per_meter'] * progress
@@ -414,17 +380,14 @@ class RacingEnv(gym.Env):
         
         self.last_position = state.position.copy()
         
-        # Speed bonus
         if state.forward_speed > 5.0:
             reward += r['speed_bonus_factor'] * state.forward_speed
         
-        # Checkpoint crossing
         next_cp_idx = (self.last_checkpoint + 1) % len(self.track.checkpoints)
         next_cp = self.track.checkpoints[next_cp_idx]
         
         if next_cp.contains_point(state.position):
             if next_cp_idx == 0 and self.checkpoints_crossed > 0:
-                # Completed a lap
                 self.laps_completed += 1
                 self.lap_times.append(self.current_lap_time)
                 if self.current_lap_time < self.best_lap_time:
@@ -437,10 +400,9 @@ class RacingEnv(gym.Env):
             self.last_checkpoint = next_cp_idx
             self.checkpoints_crossed += 1
         
-        # Penalties
         if self.collision_count > 0:
             reward += r['collision_penalty'] * self.collision_count
-            self.collision_count = 0  # Only penalize once per collision
+            self.collision_count = 0
         
         if not state.on_road:
             reward += r['offroad_penalty_per_second'] * self.sim_context.dt
@@ -461,7 +423,6 @@ class RacingEnv(gym.Env):
         else:
             self.idle_time = 0.0
         
-        # Wrong way detection
         if self.last_checkpoint < len(self.track.checkpoints):
             cp = self.track.checkpoints[self.last_checkpoint]
             to_next = vec2_sub(self.track.checkpoints[(self.last_checkpoint + 1) % len(self.track.checkpoints)].position, state.position)
@@ -473,11 +434,6 @@ class RacingEnv(gym.Env):
             else:
                 self.wrong_way_time = 0.0
         
-        # Overtake detection (simplified)
-        for opp in self.opponents:
-            # Check if we overtook
-            pass  # Implement if needed
-        
         return reward
     
     def _check_termination(self) -> Tuple[bool, bool]:
@@ -485,31 +441,24 @@ class RacingEnv(gym.Env):
         t = self.train_config.termination
         state = self.vehicle.state
         
-        # Race completed
         if self.laps_completed >= self.track.num_laps:
             return True, False
         
-        # Max steps
         if self.current_step >= self.train_config.max_episode_steps:
             return False, True
         
-        # Max time
         if self.sim_context.time >= self.train_config.max_race_time:
             return False, True
         
-        # Offroad too long
         if self.offroad_time > t['max_offroad_time']:
             return True, False
         
-        # Too many collisions
         if state.collision_count >= t['max_collisions']:
             return True, False
         
-        # Idle too long
         if self.idle_time > t['max_idle_time']:
             return True, False
         
-        # Wrong way too long
         if self.wrong_way_time > t['max_wrong_way_time']:
             return True, False
         
@@ -535,9 +484,8 @@ class RacingEnv(gym.Env):
         state = self.vehicle.state
         obs = []
         
-        # Vehicle state
         obs.extend([
-            state.speed / 100.0,  # Normalized
+            state.speed / 100.0,
             state.forward_speed / 100.0,
             state.lateral_speed / 50.0,
             state.angular_velocity / 10.0,
@@ -553,7 +501,6 @@ class RacingEnv(gym.Env):
             float(state.boost_cooldown_timer <= 0.0),
         ])
         
-        # Position relative to next checkpoint
         next_cp = self.track.checkpoints[(self.last_checkpoint + 1) % len(self.track.checkpoints)]
         to_cp = vec2_sub(next_cp.position, state.position)
         dist_to_cp = vec2_length(to_cp)
@@ -561,12 +508,11 @@ class RacingEnv(gym.Env):
         forward = vec2(np.cos(state.angle), np.sin(state.angle))
         
         obs.extend([
-            dist_to_cp / 200.0,  # Normalized
-            vec2_dot(dir_to_cp, forward),  # Alignment with checkpoint
-            vec2_dot(dir_to_cp, vec2(-forward[1], forward[0])),  # Lateral offset
+            dist_to_cp / 200.0,
+            vec2_dot(dir_to_cp, forward),
+            vec2_dot(dir_to_cp, vec2(-forward[1], forward[0])),
         ])
         
-        # Racing line info
         rl_point = self.track.get_racing_line_point(self.checkpoints_crossed / max(len(self.track.checkpoints), 1))
         to_rl = vec2_sub(rl_point.position, state.position)
         obs.extend([
@@ -576,27 +522,23 @@ class RacingEnv(gym.Env):
             rl_point.curvature * 50.0,
         ])
         
-        # Race progress
         obs.extend([
             self.laps_completed / max(self.track.num_laps, 1),
             self.checkpoints_crossed / max(len(self.track.checkpoints), 1),
             self.current_step / self.train_config.max_episode_steps,
         ])
         
-        # Opponent info (closest few)
         for opp in self.opponents[:3]:
             to_opp = vec2_sub(opp.state.position, state.position)
             dist = vec2_length(to_opp)
-            rel_vel = vec2_sub(opp.state.velocity, state.velocity)
             obs.extend([
                 min(dist / 100.0, 1.0),
                 vec2_dot(vec2_normalize(to_opp) if dist > 0 else vec2(0, 0), forward),
                 opp.state.speed / 100.0,
             ])
         
-        # Pad to fixed size if needed
         obs = np.array(obs, dtype=np.float32)
-        expected_size = self.observation_space.shape[0]
+        expected_size = 80
         if len(obs) < expected_size:
             obs = np.pad(obs, (0, expected_size - len(obs)))
         elif len(obs) > expected_size:
@@ -612,7 +554,6 @@ class RacingEnv(gym.Env):
         angles = sensor_cfg.get('angles', [])
         
         if len(angles) != num_rays:
-            # Generate evenly spaced angles
             angles = np.linspace(-np.pi, np.pi, num_rays, endpoint=False).tolist()
         
         state = self.vehicle.state
@@ -626,11 +567,8 @@ class RacingEnv(gym.Env):
             hit, dist, _, _ = self.physics_world.raycast(
                 state.position, direction, max_dist, ignore_body=self.vehicle_body.id
             )
-            
-            # Normalize distance
             readings.append(dist / max_dist if hit else 1.0)
         
-        # Add minimal vehicle state
         vehicle_state = np.array([
             state.speed / 100.0,
             state.forward_speed / 100.0,
@@ -643,14 +581,11 @@ class RacingEnv(gym.Env):
         return np.concatenate([np.array(readings, dtype=np.float32), vehicle_state])
     
     def _get_image_observation(self) -> np.ndarray:
-        """Get camera image observation (placeholder for headless)."""
-        # In headless mode, return zeros
         h, w = self.train_config.image_resolution
         c = 1 if self.train_config.image_grayscale else 3
         return np.zeros((h, w, c), dtype=np.uint8)
     
     def _get_info(self) -> Dict[str, Any]:
-        """Get info dictionary."""
         state = self.vehicle.state
         return {
             'step': self.current_step,
@@ -675,7 +610,6 @@ class RacingEnv(gym.Env):
         }
     
     def _log_telemetry(self, action: np.ndarray, reward: float) -> None:
-        """Log telemetry data."""
         self.telemetry_buffer.append({
             'step': self.current_step,
             'time': self.sim_context.time,
@@ -690,26 +624,21 @@ class RacingEnv(gym.Env):
         })
     
     def render(self) -> Optional[np.ndarray]:
-        """Render frame (placeholder)."""
         if self.render_mode == 'rgb_array':
             return self._get_image_observation()
         return None
     
     def close(self) -> None:
-        """Clean up resources."""
         pass
     
     def get_telemetry(self) -> List[Dict]:
-        """Get collected telemetry."""
         return self.telemetry_buffer.copy()
     
     def set_curriculum_stage(self, stage: int) -> None:
-        """Set curriculum learning stage."""
         max_stage = len(self.train_config.curriculum.get('stages', [])) - 1
         self.curriculum_stage = max(0, min(stage, max_stage))
     
     def advance_curriculum(self) -> bool:
-        """Advance to next curriculum stage. Returns True if advanced."""
         max_stage = len(self.train_config.curriculum.get('stages', [])) - 1
         if self.curriculum_stage < max_stage:
             self.curriculum_stage += 1
@@ -717,9 +646,7 @@ class RacingEnv(gym.Env):
         return False
 
 
-# Convenience function for creating env
 def make_racing_env(config: Optional[TrainingConfig] = None, 
                     game_config: Optional[Config] = None,
                     render_mode: Optional[str] = None) -> RacingEnv:
-    """Factory function to create racing environment."""
     return RacingEnv(config, game_config, render_mode)
