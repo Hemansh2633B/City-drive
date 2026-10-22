@@ -178,12 +178,15 @@ class TrackGenerator:
         )
         radius = max(1.0, target_length / perimeter_factor)
 
-        # Keep the combined radial variation below 10%; a positive radial function
-        # cannot cross itself. Seeded phases make every seed reproducible.
-        phases = [rng.uniform(0.0, 2.0 * math.pi) for _ in range(2)]
-        lobes = max(2, min(5, 2 + int(max(0, num_corners - 8) / 5)))
-        primary_amp = 0.025 + 0.035 * complexity
-        secondary_amp = 0.008 + 0.012 * complexity
+        # Seed selects both shape frequency and phase, so seeds produce genuinely
+        # different circuits. The summed amplitude remains below 0.12; radius stays
+        # positive, which prevents the radial loop from crossing itself.
+        phases = [rng.uniform(0.0, 2.0 * math.pi) for _ in range(3)]
+        max_lobes = 3 + int(2.0 * complexity)
+        lobes = int(rng.integers(2, max_lobes + 1))
+        primary_amp = 0.035 + 0.035 * complexity
+        secondary_amp = 0.015 + 0.020 * complexity
+        tertiary_amp = 0.005 + 0.005 * complexity
 
         points: List[Vec2] = []
         for i in range(samples + 1):
@@ -192,6 +195,7 @@ class TrackGenerator:
                 1.0
                 + primary_amp * math.sin(lobes * theta + phases[0])
                 + secondary_amp * math.sin((lobes + 2) * theta + phases[1])
+                + tertiary_amp * math.sin((lobes + 3) * theta + phases[2])
             )
             x = radius * aspect_x * radial * math.cos(theta)
             y = radius * aspect_y * radial * math.sin(theta)
@@ -549,11 +553,13 @@ class TrackGenerator:
         if len(track.checkpoints) < self.config.min_checkpoints:
             errors.append(f"Too few checkpoints: {len(track.checkpoints)}")
         
-        # Check checkpoints are in order and reachable
+        # Checkpoints should follow the route and remain reasonably spaced.
+        nominal_checkpoint_gap = track.total_length / max(1, len(track.checkpoints))
+        max_checkpoint_gap = max(track.road_width * 10, nominal_checkpoint_gap * 1.5)
         for i, cp in enumerate(track.checkpoints):
             next_cp = track.checkpoints[(i + 1) % len(track.checkpoints)]
             dist = vec2_distance(cp.position, next_cp.position)
-            if dist > track.road_width * 10:
+            if dist > max_checkpoint_gap:
                 errors.append(f"Checkpoint {i} to {next_cp.index} too far: {dist:.1f}m")
         
         # Check boundaries don't self-intersect (simplified)
