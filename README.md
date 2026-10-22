@@ -148,7 +148,7 @@ The pygame viewer shows the course, agent, seed, speed, reward, checkpoint progr
 Optional TensorBoard:
 
 ```bash
-python -m pip install "city-drive-rl[tensorboard] @ git+https://github.com/Hemansh2633B/City-drive.git@ai-training-focus"
+python -m pip install "city-drive-rl[full,tensorboard] @ git+https://github.com/Hemansh2633B/City-drive.git@ai-training-focus"
 city-drive-train --tensorboard --timesteps 250000
 tensorboard --logdir training_runs/city_drive/tensorboard
 ```
