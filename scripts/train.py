@@ -197,9 +197,16 @@ def run_ppo(args, training_config, game_config, output_dir, seed):
             self.episode_rewards = deque(maxlen=20)
             self.episode_number = 0
             self.last_render_step = 0
+            self.last_status_step = 0
+            self.last_curriculum_advance_at = 0
+            self.episode_successes = deque(maxlen=20)
             self.metrics_path = output_dir / "metrics.csv"
 
         def _on_step(self) -> bool:
+            if self.num_timesteps - self.last_status_step >= 10_000:
+                print(f"Training progress: {self.num_timesteps:,}/{args.timesteps:,} steps")
+                self.last_status_step = self.num_timesteps
+
             if args.render and (
                 self.num_timesteps - self.last_render_step >= max(1, args.render_every)
             ):
@@ -234,6 +241,23 @@ def run_ppo(args, training_config, game_config, output_dir, seed):
                     f"reward={reward:9.2f} | rolling20={rolling:9.2f} | "
                     f"laps={record['laps_completed']} | valid_map={record['track_valid']}"
                 )
+
+                self.episode_successes.append(int(record["laps_completed"] > 0))
+                ready_to_advance = (
+                    not args.no_curriculum
+                    and len(self.episode_successes) == self.episode_successes.maxlen
+                    and float(np.mean(self.episode_successes)) >= 0.6
+                    and self.episode_number - self.last_curriculum_advance_at >= 20
+                )
+                if ready_to_advance:
+                    advanced = self.training_env.env_method("advance_curriculum")
+                    if any(advanced):
+                        self.last_curriculum_advance_at = self.episode_number
+                        print(
+                            "Curriculum advanced after successful laps in "
+                            f"{sum(self.episode_successes)}/{len(self.episode_successes)} "
+                            "recent episodes."
+                        )
             return True
 
     callback_list = [TrainingDashboardCallback()]
