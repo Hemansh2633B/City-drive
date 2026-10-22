@@ -1,255 +1,373 @@
 #!/usr/bin/env python3
 """
-Training Script
+Focused reinforcement-learning trainer for City Drive.
 
-Runs AI training in headless mode with configurable parameters.
+The default path trains a PPO policy in the single-agent Gymnasium environment,
+saves periodic checkpoints, records episode metrics, and can show the live car.
 """
 
-import sys
-import os
 import argparse
-import numpy as np
+import csv
+import hashlib
+import json
+import sys
+from collections import deque
 from pathlib import Path
 
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import numpy as np
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from core.config import load_config
-from modes.training_mode import TrainingMode, TrainingModeConfig
 from ai.training_env import RacingEnv, TrainingConfig, ObservationMode, ActionMode
 
 
-class RandomAgent:
-    """Random agent for testing."""
-    
-    def __init__(self, action_space):
-        self.action_space = action_space
-    
-    def act(self, obs):
-        return self.action_space.sample()
-    
-    def update(self, transitions):
-        pass
-
-
-class HeuristicAgent:
-    """Simple heuristic agent that follows racing line."""
-    
-    def __init__(self, action_space):
-        self.action_space = action_space
-    
-    def act(self, obs):
-        # Simple heuristic: steer toward center, moderate throttle
-        # This is a placeholder - real implementation would use obs data
-        if hasattr(self.action_space, 'sample'):
-            return self.action_space.sample()
-        return np.array([0.0, 0.5, 0.0], dtype=np.float32)
-    
-    def update(self, transitions):
-        pass
-
-
-def create_agent(agent_type: str, env: RacingEnv):
-    """Create agent by type."""
-    if agent_type == "random":
-        return RandomAgent(env.action_space)
-    elif agent_type == "heuristic":
-        return HeuristicAgent(env.action_space)
-    else:
-        # Try to load a trained model
-        try:
-            from stable_baselines3 import PPO
-            model = PPO.load(agent_type)
-            return SB3Agent(model, env.action_space)
-        except ImportError:
-            print("stable_baselines3 not installed, using random agent")
-            return RandomAgent(env.action_space)
-        except Exception as e:
-            print(f"Failed to load model {agent_type}: {e}")
-            return RandomAgent(env.action_space)
-
-
-class SB3Agent:
-    """Wrapper for Stable Baselines3 agents."""
-    
-    def __init__(self, model, action_space):
-        self.model = model
-        self.action_space = action_space
-    
-    def act(self, obs):
-        action, _ = self.model.predict(obs, deterministic=True)
-        return action
-    
-    def update(self, transitions):
-        pass
+def parse_seed(value: str) -> int:
+    """Convert integer or readable seed text into a stable 32-bit integer."""
+    try:
+        return int(value) % (2 ** 32)
+    except (TypeError, ValueError):
+        return int.from_bytes(hashlib.sha256(value.encode("utf-8")).digest()[:4], "big")
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="AI Racing Training Script")
-    
-    # Mode
-    parser.add_argument("--mode", type=str, default="training",
-                       choices=["training", "1v1", "1v4"],
-                       help="Game mode")
-    
-    # Seed
-    parser.add_argument("--seed", type=str, default=None,
-                       help="Track seed (string or integer)")
-    parser.add_argument("--random-seed", action="store_true",
-                       help="Use random seed")
-    
-    # Episodes
-    parser.add_argument("--episodes", type=int, default=100,
-                       help="Number of training episodes")
-    parser.add_argument("--max-steps", type=int, default=10000,
-                       help="Max steps per episode")
-    
-    # Agent
-    parser.add_argument("--agent", type=str, default="random",
-                       help="Agent type: random, heuristic, or path to model")
-    
-    # Observation/Action
-    parser.add_argument("--obs-mode", type=str, default="vector",
-                       choices=["vector", "sensor", "image", "combined"],
-                       help="Observation mode")
-    parser.add_argument("--action-mode", type=str, default="continuous",
-                       choices=["continuous", "discrete"],
-                       help="Action mode")
-    
-    # Curriculum
-    parser.add_argument("--curriculum", action="store_true", default=True,
-                       help="Enable curriculum learning")
-    parser.add_argument("--no-curriculum", dest="curriculum", action="store_false",
-                       help="Disable curriculum learning")
-    parser.add_argument("--curriculum-stage", type=int, default=0,
-                       help="Starting curriculum stage")
-    
-    # Vehicle/Track
-    parser.add_argument("--vehicle", type=str, default="balanced",
-                       choices=["balanced", "speedster", "gripper", "drift_king", "rookie"],
-                       help="Vehicle preset")
-    parser.add_argument("--theme", type=str, default="asphalt",
-                       choices=["asphalt", "desert", "snow", "grassland", "neon", "industrial", "dirt"],
-                       help="Track theme")
+    parser = argparse.ArgumentParser(
+        description="Train a single-agent driving policy with reproducible seeded tracks."
+    )
+    parser.add_argument("--seed", default="12345",
+                        help="Integer or text seed (same seed reproduces the same run)")
+    parser.add_argument("--timesteps", type=int, default=250_000,
+                        help="Total environment steps")
+    parser.add_argument("--max-steps", type=int, default=5000,
+                        help="Maximum steps per episode")
+    parser.add_argument("--agent", choices=["ppo", "random"], default="ppo",
+                        help="PPO trains a policy; random is only a smoke-test baseline")
+    parser.add_argument("--resume", default=None,
+                        help="Resume training from a Stable-Baselines3 PPO .zip checkpoint")
+    parser.add_argument("--obs-mode", choices=["vector", "sensor", "combined"],
+                        default="vector", help="Observation representation")
+    parser.add_argument("--action-mode", choices=["continuous", "discrete"],
+                        default="continuous", help="Vehicle control action space")
+    parser.add_argument("--theme",
+                        choices=["asphalt", "desert", "snow", "grassland", "neon", "industrial", "dirt"],
+                        default="asphalt", help="Visual/surface theme for generated tracks")
     parser.add_argument("--complexity", type=float, default=None,
-                       help="Track complexity (0.0-1.0)")
+                        help="Pin track shape complexity to 0-1 (otherwise curriculum controls it)")
     parser.add_argument("--road-width", type=float, default=None,
-                       help="Road width in meters")
-    
-    # Output
-    parser.add_argument("--output", type=str, default="training_results",
-                       help="Output directory for results")
-    parser.add_argument("--save-replays", action="store_true", default=True,
-                       help="Save replay files")
-    parser.add_argument("--replay-interval", type=int, default=100,
-                       help="Save replay every N episodes")
-    
-    # Evaluation
-    parser.add_argument("--eval-interval", type=int, default=100,
-                       help="Evaluate every N episodes")
-    parser.add_argument("--eval-episodes", type=int, default=10,
-                       help="Episodes per evaluation")
-    parser.add_argument("--eval-seeds", type=str, nargs="+", default=None,
-                       help="Seeds for evaluation (space separated)")
-    
-    # Config
-    parser.add_argument("--config", type=str, default=None,
-                       help="Path to config file")
-    
+                        help="Pin road width to 8-16 metres (otherwise curriculum controls it)")
+    parser.add_argument("--no-curriculum", action="store_true",
+                        help="Keep track difficulty constant")
+    parser.add_argument("--render", action="store_true",
+                        help="Show the live top-down training window")
+    parser.add_argument("--render-every", type=int, default=4,
+                        help="Render every N environment steps when --render is enabled")
+    parser.add_argument("--checkpoint-interval", type=int, default=25_000,
+                        help="Save a PPO checkpoint every N steps")
+    parser.add_argument("--output", default="training_runs/city_drive",
+                        help="Directory for metrics, logs, and saved models")
+    parser.add_argument("--tensorboard", action="store_true",
+                        help="Write TensorBoard logs (requires tensorboard)")
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--n-steps", type=int, default=2048,
+                        help="PPO rollout length")
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--device", default="auto",
+                        help="Stable-Baselines3 device: auto, cpu, or cuda")
     return parser.parse_args()
+
+
+METRIC_FIELDS = [
+    "episode", "timesteps", "reward", "rolling_reward", "length",
+    "laps_completed", "checkpoints_crossed", "seed", "track_valid",
+    "collisions", "offroad_time"
+]
+
+
+def create_training_config(args) -> TrainingConfig:
+    config = TrainingConfig()
+    config.observation_mode = ObservationMode(args.obs_mode)
+    config.action_mode = ActionMode(args.action_mode)
+    config.max_episode_steps = max(1, int(args.max_steps))
+    config.track_theme = args.theme
+    config.track_complexity = (
+        None if args.complexity is None
+        else min(1.0, max(0.0, float(args.complexity)))
+    )
+    config.road_width = (
+        None if args.road_width is None
+        else max(8.0, min(16.0, float(args.road_width)))
+    )
+    config.curriculum["enabled"] = not args.no_curriculum
+    # Never inject NPCs/opponents into a single-agent learning task.
+    for stage in config.curriculum.get("stages", []):
+        stage["max_opponents"] = 0
+    return config
+
+
+def write_csv_row(path: Path, record: dict) -> None:
+    exists = path.exists()
+    with path.open("a", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=METRIC_FIELDS)
+        if not exists:
+            writer.writeheader()
+        writer.writerow({key: record.get(key, "") for key in METRIC_FIELDS})
+
+
+def run_random_baseline(args, training_config, game_config, output_dir, seed):
+    """Run a random-policy smoke test so the environment can be checked without SB3."""
+    env = RacingEnv(
+        config=training_config,
+        game_config=game_config,
+        render_mode="human" if args.render else None
+    )
+    obs, info = env.reset(seed=seed)
+    if args.render:
+        env.render()
+
+    rewards = []
+    episode_reward = 0.0
+    episode_steps = 0
+    episode_number = 0
+    for step in range(max(1, args.timesteps)):
+        action = env.action_space.sample()
+        obs, reward, terminated, truncated, info = env.step(action)
+        episode_reward += float(reward)
+        episode_steps += 1
+
+        if args.render and step % max(1, args.render_every) == 0:
+            env.render()
+
+        if terminated or truncated:
+            episode_number += 1
+            rewards.append(episode_reward)
+            rolling = float(np.mean(rewards[-20:]))
+            record = {
+                "episode": episode_number,
+                "timesteps": step + 1,
+                "reward": round(episode_reward, 4),
+                "rolling_reward": round(rolling, 4),
+                "length": episode_steps,
+                "laps_completed": info.get("laps_completed", 0),
+                "checkpoints_crossed": info.get("checkpoints_crossed", 0),
+                "seed": info.get("seed", seed),
+                "track_valid": info.get("track_valid", False),
+                "collisions": info.get("collision_count", 0),
+                "offroad_time": info.get("offroad_time", 0.0)
+            }
+            write_csv_row(output_dir / "metrics.csv", record)
+            print(
+                f"Episode {episode_number:5d} | steps={step + 1:8d} | "
+                f"reward={episode_reward:9.2f} | rolling20={rolling:9.2f} | "
+                f"laps={record['laps_completed']} | seed={record['seed']}"
+            )
+            episode_reward = 0.0
+            episode_steps = 0
+            obs, info = env.reset()
+
+    env.close()
+    print("Random baseline finished. This mode validates the environment; it does not learn.")
+    print(f"Metrics: {output_dir / 'metrics.csv'}")
+
+
+def run_ppo(args, training_config, game_config, output_dir, seed):
+    try:
+        from stable_baselines3 import PPO
+        from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
+        from stable_baselines3.common.monitor import Monitor
+        from stable_baselines3.common.vec_env import DummyVecEnv
+    except ImportError as exc:
+        raise SystemExit(
+            "PPO training requires Stable-Baselines3. Install with: "
+            "pip install 'stable-baselines3>=2.3' tensorboard"
+        ) from exc
+
+    render_mode = "human" if args.render else None
+    env = DummyVecEnv([
+        lambda: Monitor(RacingEnv(
+            config=training_config,
+            game_config=game_config,
+            render_mode=render_mode
+        ))
+    ])
+
+    class TrainingDashboardCallback(BaseCallback):
+        def __init__(self):
+            super().__init__(verbose=0)
+            self.episode_rewards = deque(maxlen=20)
+            self.episode_number = 0
+            self.last_render_step = 0
+            self.last_status_step = 0
+            self.last_curriculum_advance_at = 0
+            self.episode_successes = deque(maxlen=20)
+            self.metrics_path = output_dir / "metrics.csv"
+
+        def _on_step(self) -> bool:
+            if self.num_timesteps - self.last_status_step >= 10_000:
+                print(f"Training progress: {self.num_timesteps:,}/{args.timesteps:,} steps")
+                self.last_status_step = self.num_timesteps
+
+            if args.render and (
+                self.num_timesteps - self.last_render_step >= max(1, args.render_every)
+            ):
+                self.training_env.env_method("render")
+                self.last_render_step = self.num_timesteps
+
+            for info in self.locals.get("infos", []):
+                episode = info.get("episode")
+                if not episode:
+                    continue
+
+                self.episode_number += 1
+                reward = float(episode.get("r", 0.0))
+                self.episode_rewards.append(reward)
+                rolling = float(np.mean(self.episode_rewards))
+                record = {
+                    "episode": self.episode_number,
+                    "timesteps": self.num_timesteps,
+                    "reward": round(reward, 4),
+                    "rolling_reward": round(rolling, 4),
+                    "length": int(episode.get("l", 0)),
+                    "laps_completed": info.get("laps_completed", 0),
+                    "checkpoints_crossed": info.get("checkpoints_crossed", 0),
+                    "seed": info.get("seed", seed),
+                    "track_valid": info.get("track_valid", False),
+                    "collisions": info.get("collision_count", 0),
+                    "offroad_time": info.get("offroad_time", 0.0)
+                }
+                write_csv_row(self.metrics_path, record)
+                print(
+                    f"Episode {self.episode_number:5d} | steps={self.num_timesteps:8d} | "
+                    f"reward={reward:9.2f} | rolling20={rolling:9.2f} | "
+                    f"laps={record['laps_completed']} | valid_map={record['track_valid']}"
+                )
+
+                self.episode_successes.append(int(record["laps_completed"] > 0))
+                ready_to_advance = (
+                    not args.no_curriculum
+                    and len(self.episode_successes) == self.episode_successes.maxlen
+                    and float(np.mean(self.episode_successes)) >= 0.6
+                    and self.episode_number - self.last_curriculum_advance_at >= 20
+                )
+                if ready_to_advance:
+                    advanced = self.training_env.env_method("advance_curriculum")
+                    if any(advanced):
+                        self.last_curriculum_advance_at = self.episode_number
+                        print(
+                            "Curriculum advanced after successful laps in "
+                            f"{sum(self.episode_successes)}/{len(self.episode_successes)} "
+                            "recent episodes."
+                        )
+            return True
+
+    callback_list = [TrainingDashboardCallback()]
+    checkpoint_dir = output_dir / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    if args.checkpoint_interval > 0:
+        callback_list.append(CheckpointCallback(
+            save_freq=max(1, int(args.checkpoint_interval)),
+            save_path=str(checkpoint_dir),
+            name_prefix="city_drive_ppo"
+        ))
+
+    tensorboard_path = str(output_dir / "tensorboard") if args.tensorboard else None
+    if args.tensorboard:
+        try:
+            import tensorboard  # noqa: F401
+        except ImportError as exc:
+            raise SystemExit("Install TensorBoard with: pip install tensorboard") from exc
+
+    if args.resume:
+        model = PPO.load(args.resume, env=env, device=args.device)
+        model.set_random_seed(seed)
+        model.tensorboard_log = tensorboard_path
+        print(f"Resuming PPO from {args.resume}")
+    else:
+        model = PPO(
+            "MlpPolicy",
+            env,
+            learning_rate=args.learning_rate,
+            n_steps=max(2, int(args.n_steps)),
+            batch_size=max(2, int(args.batch_size)),
+            seed=seed,
+            verbose=0,
+            device=args.device,
+            tensorboard_log=tensorboard_path
+        )
+
+    (output_dir / "run_config.json").write_text(json.dumps({
+        "seed": args.seed,
+        "seed_integer": seed,
+        "timesteps": args.timesteps,
+        "agent": "PPO",
+        "observation_mode": args.obs_mode,
+        "action_mode": args.action_mode,
+        "theme": args.theme,
+        "complexity": training_config.track_complexity,
+        "road_width": training_config.road_width,
+        "render": args.render,
+        "learning_rate": args.learning_rate,
+        "n_steps": args.n_steps,
+        "batch_size": args.batch_size
+    }, indent=2), encoding="utf-8")
+
+    print("City Drive | AI training")
+    print(f"Seed: {args.seed} (normalized: {seed})")
+    print(f"Agent: PPO | Observation: {args.obs_mode} | Action: {args.action_mode}")
+    complexity_label = (
+        f"{training_config.track_complexity:.2f}"
+        if training_config.track_complexity is not None else "curriculum/default"
+    )
+    width_label = (
+        f"{training_config.road_width:.1f} m"
+        if training_config.road_width is not None else "curriculum/default"
+    )
+    print(f"Track: {args.theme} | Complexity: {complexity_label} | Road width: {width_label}")
+    print(f"Timesteps: {args.timesteps:,} | Live viewer: {'on' if args.render else 'off'}")
+    try:
+        model.learn(
+            total_timesteps=max(1, int(args.timesteps)),
+            callback=CallbackList(callback_list),
+            reset_num_timesteps=args.resume is None,
+            tb_log_name="city_drive_ppo",
+            progress_bar=False
+        )
+        final_path = output_dir / "final_model"
+        model.save(str(final_path))
+        print(f"Training complete. Model: {final_path}.zip")
+        print(f"Metrics: {output_dir / 'metrics.csv'}")
+        if args.tensorboard:
+            print(f"TensorBoard: tensorboard --logdir {output_dir / 'tensorboard'}")
+    finally:
+        env.close()
 
 
 def main():
     args = parse_args()
-    
-    # Load config
-    config = load_config(args.config)
-    
-    # Parse seed
-    seed = args.seed
-    if args.random_seed or seed is None:
-        seed = np.random.randint(0, 2**31 - 1)
+    if args.timesteps < 1:
+        raise SystemExit("--timesteps must be greater than zero")
+    if args.complexity is not None and not 0.0 <= args.complexity <= 1.0:
+        raise SystemExit("--complexity must be between 0 and 1")
+    if args.road_width is not None and not 8 <= args.road_width <= 16:
+        raise SystemExit("--road-width must be between 8 and 16 metres")
+
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = output_dir / "metrics.csv"
+    if not args.resume and metrics_path.exists():
+        # A fresh experiment should not silently mix its curves with an older run.
+        metrics_path.unlink()
+    game_config = load_config()
+    training_config = create_training_config(args)
+    seed = parse_seed(args.seed)
+
+    if args.agent == "random" and args.resume:
+        raise SystemExit("--resume only works with --agent ppo")
+    if args.agent == "random":
+        run_random_baseline(args, training_config, game_config, output_dir, seed)
     else:
-        try:
-            seed = int(seed)
-        except ValueError:
-            pass  # Keep as string
-    
-    # Create training config
-    train_config = TrainingModeConfig(
-        seed=seed,
-        theme=args.theme,
-        complexity=args.complexity,
-        road_width=args.road_width,
-        vehicle_preset=args.vehicle,
-        max_episodes=args.episodes,
-        max_steps_per_episode=args.max_steps,
-        curriculum_enabled=args.curriculum,
-        curriculum_stage=args.curriculum_stage,
-        save_replays=args.save_replays,
-        replay_interval=args.replay_interval
-    )
-    
-    # Create training mode
-    training_mode = TrainingMode(train_config, config)
-    
-    # Create environment to get spaces
-    env = training_mode.create_env(seed)
-    
-    # Create agent
-    agent = create_agent(args.agent, env)
-    env.close()
-    
-    # Parse eval seeds
-    eval_seeds = None
-    if args.eval_seeds:
-        eval_seeds = []
-        for s in args.eval_seeds:
-            try:
-                eval_seeds.append(int(s))
-            except ValueError:
-                eval_seeds.append(s)
-    
-    # Run training
-    print(f"Starting training: {args.episodes} episodes, seed={seed}")
-    print(f"Agent: {args.agent}, Obs: {args.obs_mode}, Action: {args.action_mode}")
-    
-    try:
-        stats = training_mode.run_training(
-            agent,
-            num_episodes=args.episodes,
-            eval_interval=args.eval_interval,
-            eval_episodes=args.eval_episodes,
-            eval_seeds=eval_seeds
-        )
-        
-        # Export results
-        output_dir = Path(args.output)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        training_mode.export_telemetry(str(output_dir / "telemetry"))
-        
-        # Print final stats
-        final_stats = training_mode.get_statistics()
-        print("\n=== Training Complete ===")
-        print(f"Episodes: {final_stats['episodes_completed']}")
-        print(f"Total Steps: {final_stats['total_steps']}")
-        print(f"Best Reward: {final_stats['best_reward']:.2f}")
-        print(f"Best Lap Time: {final_stats['best_lap_time']:.2f}s")
-        print(f"Mean Reward: {final_stats['mean_reward']:.2f}")
-        print(f"Results saved to: {output_dir}")
-        
-    except KeyboardInterrupt:
-        print("\nTraining interrupted")
-        training_mode.export_telemetry(str(output_dir / "telemetry_interrupted"))
-    except Exception as e:
-        print(f"Training failed: {e}")
-        import traceback
-        traceback.print_exc()
-        return 1
-    
-    return 0
+        run_ppo(args, training_config, game_config, output_dir, seed)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -41,12 +41,50 @@ class Checkpoint:
         return left, right
     
     def contains_point(self, point: Vec2) -> bool:
-        """Check if point has crossed this checkpoint (in correct direction)."""
-        left, right = self.get_bounds()
-        # Check if point is on the correct side of the line
+        """Check whether a point lies in the checkpoint's forward gate region."""
         to_point = vec2_sub(point, self.position)
-        cross = to_point[0] * self.direction[1] - to_point[1] * self.direction[0]
-        return cross > 0  # Crossed in forward direction
+        forward_distance = (
+            to_point[0] * self.direction[0]
+            + to_point[1] * self.direction[1]
+        )
+        perpendicular = vec2_perp(self.direction)
+        lateral_distance = abs(
+            to_point[0] * perpendicular[0]
+            + to_point[1] * perpendicular[1]
+        )
+        return forward_distance >= 0.0 and lateral_distance <= self.width * 0.5
+
+    def crossed_by(self, previous_point: Vec2, current_point: Vec2) -> bool:
+        """Return true only when a movement segment crosses the gate forward."""
+        previous_offset = vec2_sub(previous_point, self.position)
+        current_offset = vec2_sub(current_point, self.position)
+        previous_side = (
+            previous_offset[0] * self.direction[0]
+            + previous_offset[1] * self.direction[1]
+        )
+        current_side = (
+            current_offset[0] * self.direction[0]
+            + current_offset[1] * self.direction[1]
+        )
+
+        # Require movement from behind the line to the forward side.
+        if previous_side > 0.0 or current_side < 0.0:
+            return False
+
+        travel = current_side - previous_side
+        if travel <= 1e-9:
+            return False
+        fraction = -previous_side / travel
+        crossing = vec2_add(
+            previous_point,
+            vec2_mul(vec2_sub(current_point, previous_point), fraction)
+        )
+        lateral = vec2_sub(crossing, self.position)
+        perpendicular = vec2_perp(self.direction)
+        lateral_distance = abs(
+            lateral[0] * perpendicular[0] + lateral[1] * perpendicular[1]
+        )
+        return lateral_distance <= self.width * 0.5
 
 
 @dataclass

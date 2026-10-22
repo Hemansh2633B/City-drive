@@ -142,25 +142,19 @@ class MainMenu(Menu):
     """Main menu."""
     
     def __init__(self, renderer: Renderer):
-        super().__init__(renderer, "AI RACING SIMULATOR")
-        self.add_item("Training Mode", "mode_training")
-        self.add_item("1v1 Race", "mode_1v1")
-        self.add_item("1v4 Race", "mode_1v4")
-        self.add_item("AI vs AI Benchmark", "mode_ai_vs_ai")
-        self.add_item("Replay Browser", "replay_browser")
+        super().__init__(renderer, "CITY DRIVE  /  AI TRAINING")
+        self.add_item("Train Agent", "mode_training")
+        self.add_item("Training Replays", "replay_browser")
         self.add_item("Settings", "settings")
         self.add_item("Quit", "quit")
 
 
 class ModeSelectMenu(Menu):
-    """Mode selection menu (legacy - now in main)."""
+    """Single-agent training entry point."""
     
     def __init__(self, renderer: Renderer):
-        super().__init__(renderer, "SELECT MODE")
-        self.add_item("Training Mode", "mode_training")
-        self.add_item("1v1 Race", "mode_1v1")
-        self.add_item("1v4 Race", "mode_1v4")
-        self.add_item("AI vs AI (5 cars)", "mode_ai_vs_ai")
+        super().__init__(renderer, "AI TRAINING")
+        self.add_item("Train Agent", "mode_training")
         self.add_item("Back", "back")
 
 
@@ -285,10 +279,6 @@ class SettingsMenu(Menu):
         # Audio
         self.add_item(f"Master Volume: {int(self.config.get('audio', {}).get('master_volume', 1.0) * 100)}%", 
                       callback=self._cycle_volume)
-        
-        # Gameplay
-        self.add_item(f"Catch-up: {'On' if self.config.get('race', {}).get('catchup_enabled', False) else 'Off'}", 
-                      callback=self._toggle_catchup)
         
         self.add_item("Back", "back")
     

@@ -6,6 +6,7 @@ Supports vector observations, sensor observations, and image observations.
 """
 
 import numpy as np
+import hashlib
 from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
@@ -79,6 +80,11 @@ class TrainingConfig:
     # Episode
     max_episode_steps: int = 10000
     max_race_time: float = 300.0
+
+    # Track generation defaults (may be overridden through reset options)
+    track_theme: str = "asphalt"
+    track_complexity: Optional[float] = None
+    road_width: Optional[float] = None
     
     # Curriculum
     curriculum: Dict[str, Any] = field(default_factory=lambda: {
@@ -157,7 +163,11 @@ class RacingEnv(gym.Env):
         # Telemetry
         self.telemetry_buffer: List[Dict] = []
         self.telemetry_enabled = True
-        
+        self._render_surface = None
+        self._render_font = None
+        self._render_small_font = None
+        self._render_clock = None
+
         # Initialize spaces (will be finalized in reset)
         self._define_spaces()
     
@@ -185,9 +195,9 @@ class RacingEnv(gym.Env):
             )
         elif self.train_config.observation_mode == ObservationMode.SENSOR:
             num_rays = self.train_config.sensor_config.get('num_rays', 16)
-            obs_size = num_rays + 10  # rays + vehicle state
+            obs_size = num_rays + 6  # ray distances + six vehicle-state values
             self.observation_space = spaces.Box(
-                low=0.0, high=1.0, shape=(obs_size,), dtype=np.float32
+                low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
         elif self.train_config.observation_mode == ObservationMode.IMAGE:
             h, w = self.train_config.image_resolution
@@ -197,14 +207,24 @@ class RacingEnv(gym.Env):
             )
         else:  # COMBINED
             num_rays = self.train_config.sensor_config.get('num_rays', 16)
-            obs_size = 80 + num_rays
+            obs_size = 80 + num_rays + 6
             self.observation_space = spaces.Box(
                 low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
     
     def reset(self, *, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
         """Reset environment for new episode."""
-        super().reset(seed=seed)
+        # Gymnasium requires an integer seed. Convert readable string seeds
+        # deterministically for its internal RNG while preserving the original
+        # seed for the track generator and episode metadata.
+        gym_seed = seed
+        if isinstance(gym_seed, str):
+            gym_seed = int.from_bytes(
+                hashlib.sha256(gym_seed.encode("utf-8")).digest()[:4], "big"
+            )
+        elif gym_seed is not None:
+            gym_seed = int(gym_seed)
+        super().reset(seed=gym_seed)
         
         # Use provided seed or generate one
         if seed is not None:
@@ -216,16 +236,22 @@ class RacingEnv(gym.Env):
         
         # Apply curriculum if enabled
         if self.train_config.curriculum.get('enabled', False):
-            stage = self.train_config.curriculum['stages'][self.curriculum_stage]
+            stages = self.train_config.curriculum.get('stages', [])
+            if not stages:
+                stages = [{'name': 'standard', 'complexity': 0.35,
+                           'road_width_multiplier': 1.0, 'speed_multiplier': 1.0}]
+            stage_index = min(max(int(self.curriculum_stage), 0), len(stages) - 1)
+            stage = stages[stage_index]
             complexity = stage['complexity']
             road_width_mult = stage['road_width_multiplier']
             speed_mult = stage['speed_multiplier']
-            max_opponents = stage['max_opponents']
         else:
-            complexity = 0.5
+            complexity = 0.35
             road_width_mult = 1.0
             speed_mult = 1.0
-            max_opponents = 0
+
+        # A single-agent RL environment: no opponent cars or race-mode logic.
+        max_opponents = 0
         
         # Create simulation context
         if self.game_config is None:
@@ -242,12 +268,30 @@ class RacingEnv(gym.Env):
         track_gen_config = TrackGeneratorConfig()
         self.track_generator = TrackGenerator(track_gen_config, track_rng)
         
+        reset_options = options or {}
+        track_theme = reset_options.get("theme", self.train_config.track_theme)
+        configured_complexity = (
+            self.train_config.track_complexity
+            if self.train_config.track_complexity is not None else complexity
+        )
+        track_complexity = reset_options.get("complexity", configured_complexity)
+        configured_width = (
+            self.train_config.road_width
+            if self.train_config.road_width is not None
+            else self.game_config.track.min_road_width * road_width_mult
+        )
+        track_width = reset_options.get("road_width", configured_width)
         self.track = self.track_generator.generate(
             seed=episode_seed,
-            theme="asphalt",
-            complexity=complexity,
-            road_width=self.game_config.track.min_road_width * road_width_mult
+            theme=track_theme,
+            complexity=track_complexity,
+            road_width=track_width
         )
+        if not self.track.is_valid:
+            raise RuntimeError(
+                f"Seed {episode_seed!r} generated an invalid track: "
+                + "; ".join(self.track.validation_errors)
+            )
         
         # Create player vehicle
         vehicle_rng = self.sim_context.get_rng('vehicle')
@@ -405,15 +449,18 @@ class RacingEnv(gym.Env):
         reward = 0.0
         state = self.vehicle.state
         
+        # Keep the previous position for progress and exact checkpoint crossings.
+        previous_position = self.last_position.copy()
+
         # Progress reward
-        progress = vec2_length(vec2_sub(state.position, self.last_position))
+        progress = vec2_length(vec2_sub(state.position, previous_position))
         if state.forward_speed > 0:
             reward += r['progress_per_meter'] * progress
         else:
             reward += r['backward_penalty'] * progress
-        
+
         self.last_position = state.position.copy()
-        
+
         # Speed bonus
         if state.forward_speed > 5.0:
             reward += r['speed_bonus_factor'] * state.forward_speed
@@ -422,7 +469,7 @@ class RacingEnv(gym.Env):
         next_cp_idx = (self.last_checkpoint + 1) % len(self.track.checkpoints)
         next_cp = self.track.checkpoints[next_cp_idx]
         
-        if next_cp.contains_point(state.position):
+        if next_cp.crossed_by(previous_position, state.position):
             if next_cp_idx == 0 and self.checkpoints_crossed > 0:
                 # Completed a lap
                 self.laps_completed += 1
@@ -671,7 +718,11 @@ class RacingEnv(gym.Env):
             'seed': self.sim_context.seed,
             'track_length': self.track.total_length,
             'on_road': state.on_road,
-            'is_drifting': state.is_drifting
+            'is_drifting': state.is_drifting,
+            'track_valid': bool(self.track.is_valid),
+            'track_errors': list(self.track.validation_errors),
+            'total_checkpoints': len(self.track.checkpoints),
+            'next_checkpoint': (self.last_checkpoint + 1) % max(1, len(self.track.checkpoints))
         }
     
     def _log_telemetry(self, action: np.ndarray, reward: float) -> None:
@@ -690,15 +741,133 @@ class RacingEnv(gym.Env):
         })
     
     def render(self) -> Optional[np.ndarray]:
-        """Render frame (placeholder)."""
-        if self.render_mode == 'rgb_array':
-            return self._get_image_observation()
-        return None
-    
+        """
+        Draw a live top-down training viewer.
+
+        Human mode opens a pygame window. rgb_array returns an RGB image for
+        recording/evaluation. Rendering is separate from step(), so headless
+        training pays no rendering cost.
+        """
+        if self.render_mode not in ("human", "rgb_array") or self.track is None:
+            return None
+
+        try:
+            import pygame
+        except ImportError:
+            if self.render_mode == "human":
+                raise RuntimeError("Install pygame-ce to use --render")
+            return None
+
+        width, height = 1000, 720
+        if not pygame.get_init():
+            pygame.init()
+
+        if self.render_mode == "human":
+            if not pygame.display.get_init():
+                pygame.display.init()
+            if self._render_surface is None:
+                self._render_surface = pygame.display.set_mode((width, height))
+                pygame.display.set_caption("City Drive | RL Training Viewer")
+            surface = self._render_surface
+        else:
+            surface = pygame.Surface((width, height))
+
+        surface.fill((23, 31, 40))
+        points = self.track.centerline
+        xs = [float(p[0]) for p in points]
+        ys = [float(p[1]) for p in points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        span_x = max(max_x - min_x, 1.0)
+        span_y = max(max_y - min_y, 1.0)
+        padding = 70
+        scale = min((width - 2 * padding) / span_x, (height - 2 * padding) / span_y)
+        x_offset = (width - span_x * scale) * 0.5
+        y_offset = (height - span_y * scale) * 0.5
+
+        def screen_point(point):
+            return (
+                int(x_offset + (float(point[0]) - min_x) * scale),
+                int(height - (y_offset + (float(point[1]) - min_y) * scale))
+            )
+
+        path_points = [screen_point(p) for p in points]
+        road_px = max(8, min(48, int(self.track.road_width * scale)))
+        if len(path_points) >= 2:
+            pygame.draw.lines(surface, (9, 13, 18), False, path_points, road_px + 8)
+            pygame.draw.lines(surface, (65, 76, 87), False, path_points, road_px)
+            pygame.draw.lines(surface, (120, 132, 142), False, path_points, max(1, road_px // 24))
+
+        for checkpoint in self.track.checkpoints:
+            left, right = checkpoint.get_bounds()
+            color = (245, 194, 66) if checkpoint.is_start_finish else (68, 191, 175)
+            pygame.draw.line(surface, color, screen_point(left), screen_point(right), 2)
+
+        state = self.vehicle.state if self.vehicle is not None else None
+        if state is not None:
+            position = np.asarray(state.position, dtype=float)
+            forward = np.array([np.cos(state.angle), np.sin(state.angle)])
+            side = np.array([-forward[1], forward[0]])
+            nose = position + forward * 3.0
+            rear = position - forward * 2.0
+            car_points = [
+                screen_point(nose),
+                screen_point(rear + side * 1.15),
+                screen_point(rear - side * 1.15)
+            ]
+            pygame.draw.polygon(surface, (77, 170, 255), car_points)
+            pygame.draw.polygon(surface, (225, 242, 255), car_points, 2)
+
+        if self._render_font is None:
+            self._render_font = pygame.font.Font(None, 25)
+            self._render_small_font = pygame.font.Font(None, 20)
+
+        speed = state.speed * 3.6 if state is not None else 0.0
+        hud_lines = [
+            ("CITY DRIVE  /  REINFORCEMENT LEARNING", (235, 243, 250)),
+            (f"Seed: {self.track.seed}    Map: {'VALID' if self.track.is_valid else 'INVALID'}",
+             (113, 230, 185) if self.track.is_valid else (255, 110, 110)),
+            (f"Episode step: {self.current_step}    Speed: {speed:.1f} km/h",
+             (215, 225, 235)),
+            (f"Reward: {self.episode_reward:.2f}    Checkpoints: {self.checkpoints_crossed}",
+             (215, 225, 235)),
+            (f"Laps completed: {self.laps_completed}/{self.track.num_laps}",
+             (215, 225, 235)),
+            ("Blue arrow = learning agent     Gold = start/finish     Teal = checkpoint",
+             (156, 174, 190))
+        ]
+        pygame.draw.rect(surface, (14, 21, 29), (0, 0, width, 142))
+        for i, (label, color) in enumerate(hud_lines):
+            font = self._render_font if i == 0 else self._render_small_font
+            surface.blit(font.render(label, True, color), (20, 14 + i * 21))
+
+        if self.render_mode == "human":
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.display.quit()
+                    self._render_surface = None
+                    self.render_mode = None
+                    return None
+            pygame.display.flip()
+            if self._render_clock is None:
+                self._render_clock = pygame.time.Clock()
+            self._render_clock.tick(60)
+            return None
+
+        pixels = pygame.surfarray.array3d(surface)
+        return np.transpose(pixels, (1, 0, 2)).copy()
+
     def close(self) -> None:
-        """Clean up resources."""
-        pass
-    
+        """Close viewer resources, if they were opened."""
+        if self._render_surface is not None:
+            try:
+                import pygame
+                if pygame.display.get_init():
+                    pygame.display.quit()
+            finally:
+                self._render_surface = None
+                self._render_clock = None
+
     def get_telemetry(self) -> List[Dict]:
         """Get collected telemetry."""
         return self.telemetry_buffer.copy()

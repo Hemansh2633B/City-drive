@@ -6,7 +6,7 @@ Supports multiple track types, complexity levels, and themes.
 """
 
 import numpy as np
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Union
 from dataclasses import dataclass
 import math
 
@@ -156,147 +156,55 @@ class TrackGenerator:
     
     def _generate_centerline(self, rng: DeterministicRNG, num_corners: int,
                              target_length: float, complexity: float) -> List[Vec2]:
-        """Generate track centerline using parametric curve."""
-        points = []
-        
-        # Start at origin
-        current_pos = vec2(0.0, 0.0)
-        current_angle = 0.0
-        
-        # Generate corner parameters
-        corner_params = []
-        for i in range(num_corners):
-            # Determine corner type based on complexity and randomness
-            corner_type = self._choose_corner_type(rng, complexity)
-            
-            if corner_type == "straight":
-                length = rng.uniform(30.0, 100.0)
-                corner_params.append(("straight", length, 0.0, 0))
-            elif corner_type == "corner":
-                radius = rng.uniform(self.config.min_corner_radius, self.config.max_corner_radius)
-                angle = rng.uniform(0.5, 1.5) * (1 if rng.random() > 0.5 else -1)
-                length = abs(angle) * radius
-                corner_params.append(("corner", length, radius, 1 if angle > 0 else -1))
-            elif corner_type == "hairpin":
-                radius = rng.uniform(self.config.min_corner_radius, 15.0)
-                angle = math.pi * (0.9 + rng.random() * 0.2) * (1 if rng.random() > 0.5 else -1)
-                length = abs(angle) * radius
-                corner_params.append(("hairpin", length, radius, 1 if angle > 0 else -1))
-            elif corner_type == "chicane":
-                # Two quick opposite turns
-                radius = rng.uniform(8.0, 20.0)
-                angle1 = rng.uniform(0.6, 1.0) * (1 if rng.random() > 0.5 else -1)
-                angle2 = -angle1 * rng.uniform(0.8, 1.2)
-                corner_params.append(("chicane", 0, radius, 1 if angle1 > 0 else -1))
-                # Store second angle in a special way
-            elif corner_type == "s_curve":
-                radius = rng.uniform(15.0, 35.0)
-                angle1 = rng.uniform(0.5, 1.0) * (1 if rng.random() > 0.5 else -1)
-                angle2 = -angle1 * rng.uniform(0.7, 1.0)
-                corner_params.append(("s_curve", 0, radius, 1 if angle1 > 0 else -1))
-        
-        # Normalize lengths to match target
-        total_param_length = sum(p[1] for p in corner_params if p[0] != "chicane" and p[0] != "s_curve")
-        # Add estimated lengths for chicanes/s-curves
-        for p in corner_params:
-            if p[0] in ("chicane", "s_curve"):
-                total_param_length += p[2] * 2.5  # Estimate
-        
-        scale = target_length / max(total_param_length, 1.0)
-        
-        # Build centerline
-        points.append(current_pos)
-        
-        for i, (ctype, length, radius, direction) in enumerate(corner_params):
-            if ctype == "straight":
-                length *= scale
-                for _ in range(max(2, int(length / 10.0))):
-                    current_pos = vec2_add(current_pos, vec2_mul(vec2_normalize(vec2(math.cos(current_angle), math.sin(current_angle))), length / max(2, int(length / 10.0))))
-                    points.append(current_pos)
-            
-            elif ctype == "corner":
-                radius *= scale
-                length = abs(length * scale)
-                angle = length / radius * direction
-                steps = max(3, int(abs(angle) * 5))
-                for step in range(1, steps + 1):
-                    a = angle * step / steps
-                    offset = vec2_rotate(vec2(radius * direction, 0), current_angle + a - direction * math.pi/2)
-                    center = vec2_add(current_pos, vec2_sub(offset, vec2_rotate(vec2(radius * direction, 0), current_angle - direction * math.pi/2)))
-                    points.append(center)
-                current_angle += angle
-                current_pos = points[-1]
-            
-            elif ctype == "hairpin":
-                radius *= scale
-                angle = math.pi * direction * 0.95  # Slightly less than 180
-                steps = max(5, int(abs(angle) * 8))
-                for step in range(1, steps + 1):
-                    a = angle * step / steps
-                    offset = vec2_rotate(vec2(radius * direction, 0), current_angle + a - direction * math.pi/2)
-                    center = vec2_add(current_pos, vec2_sub(offset, vec2_rotate(vec2(radius * direction, 0), current_angle - direction * math.pi/2)))
-                    points.append(center)
-                current_angle += angle
-                current_pos = points[-1]
-            
-            elif ctype == "chicane":
-                radius *= scale
-                angle1 = rng.uniform(0.6, 1.0) * direction
-                angle2 = -angle1 * rng.uniform(0.8, 1.2)
-                length1 = abs(angle1) * radius
-                length2 = abs(angle2) * radius
-                
-                # First turn
-                steps1 = max(3, int(abs(angle1) * 5))
-                for step in range(1, steps1 + 1):
-                    a = angle1 * step / steps1
-                    offset = vec2_rotate(vec2(radius * direction, 0), current_angle + a - direction * math.pi/2)
-                    center = vec2_add(current_pos, vec2_sub(offset, vec2_rotate(vec2(radius * direction, 0), current_angle - direction * math.pi/2)))
-                    points.append(center)
-                current_angle += angle1
-                current_pos = points[-1]
-                
-                # Straight between
-                mid_length = radius * 1.5
-                for _ in range(2):
-                    current_pos = vec2_add(current_pos, vec2_mul(vec2_normalize(vec2(math.cos(current_angle), math.sin(current_angle))), mid_length / 2))
-                    points.append(current_pos)
-                
-                # Second turn
-                steps2 = max(3, int(abs(angle2) * 5))
-                for step in range(1, steps2 + 1):
-                    a = angle2 * step / steps2
-                    offset = vec2_rotate(vec2(radius * -direction, 0), current_angle + a + direction * math.pi/2)
-                    center = vec2_add(current_pos, vec2_sub(offset, vec2_rotate(vec2(radius * -direction, 0), current_angle + direction * math.pi/2)))
-                    points.append(center)
-                current_angle += angle2
-                current_pos = points[-1]
-            
-            elif ctype == "s_curve":
-                radius *= scale
-                angle1 = rng.uniform(0.5, 1.0) * direction
-                angle2 = -angle1 * rng.uniform(0.7, 1.0)
-                
-                steps1 = max(4, int(abs(angle1) * 6))
-                for step in range(1, steps1 + 1):
-                    a = angle1 * step / steps1
-                    offset = vec2_rotate(vec2(radius * direction, 0), current_angle + a - direction * math.pi/2)
-                    center = vec2_add(current_pos, vec2_sub(offset, vec2_rotate(vec2(radius * direction, 0), current_angle - direction * math.pi/2)))
-                    points.append(center)
-                current_angle += angle1
-                current_pos = points[-1]
-                
-                steps2 = max(4, int(abs(angle2) * 6))
-                for step in range(1, steps2 + 1):
-                    a = angle2 * step / steps2
-                    offset = vec2_rotate(vec2(radius * -direction, 0), current_angle + a + direction * math.pi/2)
-                    center = vec2_add(current_pos, vec2_sub(offset, vec2_rotate(vec2(radius * -direction, 0), current_angle + direction * math.pi/2)))
-                    points.append(center)
-                current_angle += angle2
-                current_pos = points[-1]
-        
+        """
+        Generate a simple, smooth, closed circuit from a deterministic seed.
+
+        The old generator stitched independent turns together and then bridged the
+        remaining gap with a spline. That could create abrupt joins or ambiguous
+        crossings. This polar-loop construction keeps the radius positive at every
+        angle, so the centerline is closed and non-self-intersecting by construction.
+        Complexity changes the shape gently rather than making courses impossible.
+        """
+        samples = 160
+        complexity = clamp(complexity, 0.0, 1.0)
+
+        # An ellipse gives a more natural driving line than a perfect circle.
+        # Ramanujan's perimeter approximation makes generated lengths close to the
+        # requested target before the small, bounded shape variations are applied.
+        aspect_x, aspect_y = 1.18, 0.86
+        perimeter_factor = math.pi * (
+            3.0 * (aspect_x + aspect_y)
+            - math.sqrt((3.0 * aspect_x + aspect_y) * (aspect_x + 3.0 * aspect_y))
+        )
+        radius = max(1.0, target_length / perimeter_factor)
+
+        # Seed selects both shape frequency and phase, so seeds produce genuinely
+        # different circuits. The summed amplitude remains below 0.12; radius stays
+        # positive, which prevents the radial loop from crossing itself.
+        phases = [rng.uniform(0.0, 2.0 * math.pi) for _ in range(3)]
+        max_lobes = 3 + int(2.0 * complexity)
+        lobes = int(rng.integers(2, max_lobes + 1))
+        primary_amp = 0.035 + 0.035 * complexity
+        secondary_amp = 0.015 + 0.020 * complexity
+        tertiary_amp = 0.005 + 0.005 * complexity
+
+        points: List[Vec2] = []
+        for i in range(samples + 1):
+            theta = 2.0 * math.pi * i / samples
+            radial = (
+                1.0
+                + primary_amp * math.sin(lobes * theta + phases[0])
+                + secondary_amp * math.sin((lobes + 2) * theta + phases[1])
+                + tertiary_amp * math.sin((lobes + 3) * theta + phases[2])
+            )
+            x = radius * aspect_x * radial * math.cos(theta)
+            y = radius * aspect_y * radial * math.sin(theta)
+            points.append(vec2(x, y))
+
+        # Exact closure avoids microscopic gaps from floating-point trig values.
+        points[-1] = points[0].copy()
         return points
-    
+
     def _choose_corner_type(self, rng: DeterministicRNG, complexity: float) -> str:
         """Choose corner type based on complexity and randomness."""
         r = rng.random()
@@ -467,8 +375,15 @@ class TrackGenerator:
         """Generate evenly spaced checkpoints along centerline."""
         checkpoints = []
         
-        # Place checkpoints every ~50-80 meters
-        target_spacing = 60.0
+        # Choose spacing from actual loop length so short seeds still have
+        # enough checkpoints and long seeds do not create an excessive number.
+        total_length = self._calculate_length(centerline)
+        desired_count = int(round(total_length / 60.0))
+        desired_count = max(
+            self.config.min_checkpoints,
+            min(self.config.max_checkpoints, desired_count)
+        )
+        target_spacing = total_length / (desired_count + 0.5)
         accumulated = 0.0
         last_checkpoint_idx = 0
         
@@ -492,7 +407,7 @@ class TrackGenerator:
                     is_start_finish=(len(checkpoints) == 0)
                 )
                 checkpoints.append(cp)
-                accumulated = 0.0
+                accumulated -= target_spacing
                 last_checkpoint_idx = i
         
         # Ensure at least minimum checkpoints
@@ -578,28 +493,30 @@ class TrackGenerator:
     
     def _generate_spawn_positions(self, centerline: List[Vec2], road_width: float,
                                   start_checkpoint: Optional[Checkpoint]) -> Tuple[List[Vec2], List[float]]:
-        """Generate starting grid positions."""
-        positions = []
-        angles = []
-        
+        """Generate a compact starting grid that fits inside the road."""
+        positions: List[Vec2] = []
+        angles: List[float] = []
+
         if start_checkpoint:
-            # Grid behind start/finish line
             perp = vec2_perp(start_checkpoint.direction)
-            for i in range(5):  # Support up to 5 cars (1v4)
-                offset = (i - 2) * 3.5  # Staggered grid
+            # Keep every grid slot comfortably inside the road. The previous fixed
+            # 3.5 m spacing placed the first car outside narrow tracks at reset.
+            lateral_spacing = min(1.5, max(0.5, road_width * 0.18))
+            offsets = [0.0, -lateral_spacing, lateral_spacing,
+                       -2.0 * lateral_spacing, 2.0 * lateral_spacing]
+            for i in range(5):
+                offset = offsets[i]
                 pos = vec2_add(start_checkpoint.position, vec2_mul(perp, offset))
-                # Move back from line
-                pos = vec2_sub(pos, vec2_mul(start_checkpoint.direction, 5.0 + i * 3.0))
+                pos = vec2_sub(pos, vec2_mul(start_checkpoint.direction, 5.0 + i * 2.5))
                 positions.append(pos)
                 angles.append(vec2_angle(start_checkpoint.direction))
         else:
-            # Fallback
             for i in range(5):
-                positions.append(vec2(float(i * 3), 0.0))
+                positions.append(vec2(float(i * 2), 0.0))
                 angles.append(0.0)
-        
+
         return positions, angles
-    
+
     def _get_theme_data(self, theme: str) -> Dict[str, Any]:
         """Get theme-specific data."""
         themes = {
@@ -636,17 +553,28 @@ class TrackGenerator:
         if len(track.checkpoints) < self.config.min_checkpoints:
             errors.append(f"Too few checkpoints: {len(track.checkpoints)}")
         
-        # Check checkpoints are in order and reachable
+        # Checkpoints should follow the route and remain reasonably spaced.
+        nominal_checkpoint_gap = track.total_length / max(1, len(track.checkpoints))
+        max_checkpoint_gap = max(track.road_width * 10, nominal_checkpoint_gap * 1.5)
         for i, cp in enumerate(track.checkpoints):
             next_cp = track.checkpoints[(i + 1) % len(track.checkpoints)]
             dist = vec2_distance(cp.position, next_cp.position)
-            if dist > track.road_width * 10:
+            if dist > max_checkpoint_gap:
                 errors.append(f"Checkpoint {i} to {next_cp.index} too far: {dist:.1f}m")
         
-        # Check boundaries don't self-intersect (simplified)
-        # Check spawn positions are valid
+        # Check spawn positions are valid and the single-agent spawn is on-road.
         if len(track.start_positions) < 1:
             errors.append("No valid spawn positions")
+        elif len(track.centerline) >= 2:
+            spawn = track.start_positions[0]
+            spawn_distance = min(
+                point_line_distance(spawn, track.centerline[i], track.centerline[i + 1])
+                for i in range(len(track.centerline) - 1)
+            )
+            if spawn_distance > track.road_width * 0.5:
+                errors.append(
+                    f"Training spawn outside road: {spawn_distance:.2f}m from centerline"
+                )
         
         track.validation_errors = errors
         return len(errors) == 0

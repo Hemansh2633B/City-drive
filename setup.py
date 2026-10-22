@@ -1,34 +1,29 @@
 #!/usr/bin/env python3
-"""
-Setup script for AI Racing Simulator.
-"""
+"""Package metadata for City Drive RL."""
 
-from setuptools import setup, find_packages
 from pathlib import Path
+from setuptools import setup, find_packages
 
-# Read requirements
 requirements = []
-with open("requirements.txt") as f:
-    for line in f:
+with open(Path(__file__).with_name("requirements.txt"), encoding="utf-8") as stream:
+    for line in stream:
         line = line.strip()
         if line and not line.startswith("#"):
             requirements.append(line)
 
-# Read long description
-long_description = ""
-readme_path = Path("README.md")
-if readme_path.exists():
-    long_description = readme_path.read_text()
+readme_path = Path(__file__).with_name("README.md")
+long_description = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
 
 setup(
-    name="ai-racing-simulator",
-    version="1.0.0",
-    author="AI Racing Team",
-    description="2D top-down racing simulator for AI training and research",
+    name="city-drive-rl",
+    version="2.0.0",
+    author="City Drive Contributors",
+    description="Seeded 2D driving environment for single-agent reinforcement learning",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/ai-racing-simulator",
-    packages=find_packages(include=["race", "race.*"]),
+    url="https://github.com/Hemansh2633B/City-drive",
+    packages=find_packages(exclude=("tests", "tests.*")),
+    py_modules=["main"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
@@ -38,26 +33,22 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",
-        "Topic :: Games/Entertainment :: Simulation",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
     python_requires=">=3.10",
     install_requires=requirements,
     extras_require={
-        "rl": ["stable-baselines3>=2.0.0"],
-        "dev": ["pytest>=7.4.0", "pytest-cov>=4.1.0", "black", "ruff"],
+        "dev": ["pytest>=7.4.0", "pytest-cov>=4.1.0", "ruff"],
         "numba": ["numba>=0.58.0"],
+        "tensorboard": ["tensorboard>=2.14.0"],
     },
     entry_points={
         "console_scripts": [
-            "ai-racing=main:main",
-            "ai-racing-game=scripts.game:main",
-            "ai-racing-train=scripts.train:main",
-            "ai-racing-eval=scripts.evaluate:main",
+            "city-drive=main:main",
+            "city-drive-train=scripts.train:main",
+            "city-drive-view=scripts.game:main",
+            "city-drive-eval=scripts.evaluate:main",
         ],
     },
     include_package_data=True,
-    package_data={
-        "race": ["configs/*.yaml"],
-    },
 )
