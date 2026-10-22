@@ -80,6 +80,11 @@ class TrainingConfig:
     # Episode
     max_episode_steps: int = 10000
     max_race_time: float = 300.0
+
+    # Track generation defaults (may be overridden through reset options)
+    track_theme: str = "asphalt"
+    track_complexity: Optional[float] = None
+    road_width: Optional[float] = None
     
     # Curriculum
     curriculum: Dict[str, Any] = field(default_factory=lambda: {
@@ -263,11 +268,18 @@ class RacingEnv(gym.Env):
         self.track_generator = TrackGenerator(track_gen_config, track_rng)
         
         reset_options = options or {}
-        track_theme = reset_options.get("theme", "asphalt")
-        track_complexity = reset_options.get("complexity", complexity)
-        track_width = reset_options.get(
-            "road_width", self.game_config.track.min_road_width * road_width_mult
+        track_theme = reset_options.get("theme", self.train_config.track_theme)
+        configured_complexity = (
+            self.train_config.track_complexity
+            if self.train_config.track_complexity is not None else complexity
         )
+        track_complexity = reset_options.get("complexity", configured_complexity)
+        configured_width = (
+            self.train_config.road_width
+            if self.train_config.road_width is not None
+            else self.game_config.track.min_road_width * road_width_mult
+        )
+        track_width = reset_options.get("road_width", configured_width)
         self.track = self.track_generator.generate(
             seed=episode_seed,
             theme=track_theme,
