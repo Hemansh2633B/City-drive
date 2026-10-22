@@ -1,128 +1,178 @@
 # City Drive RL
 
-City Drive is a 2D top-down driving environment built for **single-agent reinforcement learning**. Its primary workflow is training and evaluating driving policies—not player-versus-player racing.
+**A small, seeded driving environment for Gymnasium and reinforcement-learning experiments.**
 
-## Focused feature set
-
-- **Gymnasium environment** with vector, ray-sensor, and combined observations.
-- **PPO training** through Stable-Baselines3, with resume-from-checkpoint support.
-- **Seeded procedural circuits**: repeat a seed to reproduce the same course.
-- **Course validation**: generated centerlines form closed, non-self-intersecting radial loops; checkpoint spacing and spawn positions are validated.
-- **Live training viewer** showing the map, learning agent, speed, accumulated reward, checkpoint count, lap completion, and seed.
-- **Training records**: episode reward, rolling reward, episode length, laps/checkpoints, and map validity are written to CSV.
-- **Checkpoints and experiment config** are saved to disk so runs can be reproduced or resumed.
-- **Headless mode** is available by default for faster training. The viewer is optional.
+The goal is a Gym-style workflow: install the environment, create it with `gym.make()`, call `reset()` and `step()`, and plug in your preferred agent. Competitive race modes are not part of the main workflow.
 
 ## Install
 
-Python 3.10 or newer is recommended.
+### Install the environment only
+
+This is the lightest option. The simulation and environment run on the CPU; it does not require PyTorch or pygame.
+
+```bash
+python -m pip install "city-drive-rl @ git+https://github.com/Hemansh2633B/City-drive.git@ai-training-focus"
+```
+
+### Install PPO training and the live viewer
+
+```bash
+python -m pip install "city-drive-rl[full] @ git+https://github.com/Hemansh2633B/City-drive.git@ai-training-focus"
+```
+
+The ref above installs the current refactor branch. The project is **not yet published on PyPI**, so `pip install city-drive-rl` by itself will not work until a release is published.
+
+### Install from a local clone (development)
 
 ```bash
 git clone https://github.com/Hemansh2633B/City-drive.git
 cd City-drive
-
-python -m venv .venv
-source .venv/bin/activate       # Linux/macOS
-# .venv\Scripts\activate      # Windows
-
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+git switch ai-training-focus
+python -m pip install -e ".[full,dev]"
 ```
 
-## Train an agent
+Use a virtual environment if other Python projects on your machine need different dependencies.
 
-Start a reproducible PPO run with a live viewer:
+## 1. Minimal Gymnasium example
+
+```python
+import gymnasium as gym
+import city_drive_rl  # registers CityDrive-v0
+
+env = gym.make("CityDrive-v0")
+observation, info = env.reset(seed=42)
+
+for _ in range(1_000):
+    action = env.action_space.sample()  # replace this with your agent
+    observation, reward, terminated, truncated, info = env.step(action)
+
+    if terminated or truncated:
+        observation, info = env.reset()  # next episode, new deterministic RNG draw
+
+env.close()
+```
+
+This is the basic Gymnasium API. The action is either a 3-value continuous vector (steering, throttle, brake) or a discrete action depending on configuration. The default environment uses continuous actions and a vector observation.
+
+## 2. Configure a course
+
+```python
+import gymnasium as gym
+import city_drive_rl
+from ai.training_env import TrainingConfig, ObservationMode, ActionMode
+
+config = TrainingConfig(
+    observation_mode=ObservationMode.VECTOR,
+    action_mode=ActionMode.CONTINUOUS,
+    max_episode_steps=5_000,
+)
+config.track_theme = "asphalt"
+config.track_complexity = 0.45
+config.road_width = 12.0
+config.curriculum["enabled"] = False
+
+env = gym.make("CityDrive-v0", config=config)
+observation, info = env.reset(seed="practice-map-01")
+print(info["track_valid"], info["seed"])
+env.close()
+```
+
+Supported observations are `vector`, `sensor`, and `combined`. Image observations are rejected explicitly for now rather than returning fake all-zero images. Supported actions are `continuous` and `discrete`.
+
+## 3. Train PPO
+
+After installing the `full` extra:
 
 ```bash
-python main.py train --seed "research-run-01" --timesteps 250000 --render
+city-drive-train --seed "research-run-01" --timesteps 250000 --render
 ```
 
-Run headless for speed:
+Or run headless for less overhead:
 
 ```bash
-python main.py train --seed 12345 --timesteps 100000
+city-drive-train --seed 12345 --timesteps 100000 --device cpu
 ```
 
-The trainer uses PPO by default. It writes:
+The trainer uses Stable-Baselines3 PPO. It supports model resume, periodic checkpoints, progress output, episode metrics, optional TensorBoard logs, and the live viewer.
+
+Example custom training with Stable-Baselines3:
+
+```python
+import gymnasium as gym
+import city_drive_rl
+from stable_baselines3 import PPO
+
+env = gym.make("CityDrive-v0")
+model = PPO("MlpPolicy", env, device="auto", verbose=1)
+model.learn(total_timesteps=250_000)
+model.save("city_drive_ppo")
+env.close()
+```
+
+Outputs from the CLI go to `training_runs/city_drive/` by default:
 
 ```text
-training_runs/city_drive/
-├── checkpoints/        # periodic PPO checkpoints
-├── metrics.csv         # one row per completed episode
-├── run_config.json     # settings and normalized seed
-└── final_model.zip     # final trained model
+checkpoints/       # periodic model checkpoints
+metrics.csv        # completed episode metrics and rolling reward
+run_config.json    # run settings and seed
+final_model.zip    # final PPO model
 ```
 
-To continue from a saved checkpoint:
+Use `--resume path/to/checkpoint.zip` to resume a saved PPO run. `--agent random` is only an environment/viewer smoke test; it does not learn.
+
+## CPU and GPU
+
+- **The simulator is CPU-based.** Track generation, vehicle physics and Gymnasium stepping use NumPy/Python on the CPU.
+- **The policy can train on CPU or a supported GPU.** Use `--device cpu`, `--device cuda`, or `--device auto` for PPO. `auto` selects CUDA only when the installed PyTorch build and driver support it.
+- **CUDA is optional.** Install the correct PyTorch build for your operating system, GPU and driver using the official [PyTorch install selector](https://pytorch.org/get-started/locally/), then install this project’s `rl` or `full` extra. A GPU flag cannot add GPU support to a CPU-only PyTorch build.
+- CPU-only users can run and train small policies without CUDA. Rendering is optional and requires the `render` extra.
+
+The physics engine itself does not become GPU-accelerated just because the PPO policy uses a GPU; vectorized environments and faster physics would be separate performance improvements.
+
+## Reproducibility and course validation
+
+Pass an integer or text seed to `reset(seed=...)`. The same seed and same environment settings reproduce the same track and spawn. A new seed selects a new procedural course.
+
+The course generator builds closed radial-loop circuits with bounded variation, then validates closure, checkpoint spacing and the starting position. Checkpoints are counted only when the car crosses the gate in the forward direction. Course generation is designed to avoid self-intersecting centerlines by construction; that is not a proof that every driving policy can finish every course.
+
+Curriculum learning is optional. It changes course difficulty gradually and **does not add NPC opponents** to the training environment.
+
+## See training live
 
 ```bash
-python main.py train \
-  --resume training_runs/city_drive/checkpoints/city_drive_ppo_25000_steps.zip \
-  --seed 12345 --timesteps 100000
+city-drive-train --seed 42 --timesteps 100000 --render
 ```
 
-To smoke-test the environment without training a neural policy:
+The pygame viewer shows the course, agent, seed, speed, reward, checkpoint progress, lap count and map validity. Close the viewer to stop displaying frames; use headless mode for faster runs. Per-episode metrics are written to CSV and can also be opened in a spreadsheet.
+
+Optional TensorBoard:
 
 ```bash
-python main.py train --agent random --seed "smoke-test" --timesteps 20000 --render
-```
-
-The random baseline is only for validating the environment and viewer; it does not learn.
-
-## Track and environment settings
-
-```bash
-python main.py train \
-  --seed "curvy-map-07" \
-  --theme asphalt \
-  --complexity 0.55 \
-  --road-width 12 \
-  --obs-mode vector \
-  --action-mode continuous \
-  --timesteps 300000
-```
-
-- **Seed** accepts an integer or text. Reusing it with the same configuration reproduces the initial track and random stream.
-- **Complexity** is clamped to `0.0–1.0`. Seeded shape harmonics and phases vary each closed course while keeping the radius positive, avoiding self-intersections from track closure.
-- **Road width** is set in simulation metres; the supported range is 8–16 m.
-- **Observations**: `vector` (default), `sensor` (ray distances plus vehicle state), or `combined`.
-- **Actions**: `continuous` (steering, throttle, brake) or `discrete`.
-- **Curriculum** changes difficulty over time without adding NPCs or opponent cars.
-
-For faster iteration, lower `--timesteps` and use `--no-curriculum`. To slow down or speed up PPO, change `--learning-rate`, `--n-steps`, and `--batch-size`.
-
-## View training metrics
-
-Every completed episode appends a row to `metrics.csv`. Columns include total reward, rolling mean reward, step count, checkpoints crossed, laps completed, track validity, collision count, and off-road time.
-
-Optional TensorBoard logging:
-
-```bash
-pip install tensorboard
-python main.py train --tensorboard --timesteps 250000
+python -m pip install "city-drive-rl[tensorboard] @ git+https://github.com/Hemansh2633B/City-drive.git@ai-training-focus"
+city-drive-train --tensorboard --timesteps 250000
 tensorboard --logdir training_runs/city_drive/tensorboard
 ```
 
-## Test
+## Test the environment
+
+From the repository root:
 
 ```bash
-python main.py test
-# or
-pytest tests/ -q
+python -m pip install -e ".[full,dev]"
+python -m pytest tests/ -q
 ```
+
+GitHub Actions runs the environment tests on supported Python versions. Test the exact environment and hardware combination you plan to use before starting long training runs.
 
 ## Project layout
 
-```text
-ai/             Gymnasium training environment
-core/           Physics, math, deterministic random streams, config
-track/          Seeded course generation, validation, checkpoints
-vehicles/       Vehicle dynamics and presets
-scripts/train.py PPO trainer, checkpoints, metrics and live rendering
-scripts/evaluate.py
-ui/             Interactive viewer/menu components
-telemetry/      Telemetry and replay support
-tests/          Determinism and RL environment regression tests
-```
+- `city_drive_rl/`: Gymnasium environment registration
+- `ai/training_env.py`: observations, actions, rewards, reset/step and viewer
+- `track/`: seeded track generation, validation and checkpoints
+- `core/`: physics, geometry, deterministic RNG and configuration
+- `scripts/train.py`: PPO CLI, checkpoint saves and metrics
+- `tests/`: determinism and RL API regression tests
 
-The main launcher exposes `train`, `eval`, and `test`. Competitive race modes are not part of the primary workflow.
+## License
+
+MIT. See [LICENSE](LICENSE).
