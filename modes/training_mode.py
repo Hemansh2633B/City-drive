@@ -4,8 +4,10 @@ Training Mode
 Single-car AI training environment with curriculum learning support.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass
 
 from core.config import SimulationContext, Config
