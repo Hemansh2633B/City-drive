@@ -4,21 +4,15 @@
 from pathlib import Path
 from setuptools import setup, find_packages
 
-requirements = []
-with open(Path(__file__).with_name("requirements.txt"), encoding="utf-8") as stream:
-    for line in stream:
-        line = line.strip()
-        if line and not line.startswith("#"):
-            requirements.append(line)
-
-readme_path = Path(__file__).with_name("README.md")
+ROOT = Path(__file__).parent
+readme_path = ROOT / "README.md"
 long_description = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
 
 setup(
     name="city-drive-rl",
-    version="2.0.0",
+    version="2.1.0",
     author="City Drive Contributors",
-    description="Seeded 2D driving environment for single-agent reinforcement learning",
+    description="Seeded 2D driving environment for Gymnasium and reinforcement learning",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Hemansh2633B/City-drive",
@@ -36,11 +30,21 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
     python_requires=">=3.10",
-    install_requires=requirements,
+    install_requires=[
+        "numpy>=1.24.0",
+        "gymnasium>=0.29.0",
+        "pyyaml>=6.0",
+    ],
     extras_require={
-        "dev": ["pytest>=7.4.0", "pytest-cov>=4.1.0", "ruff"],
-        "numba": ["numba>=0.58.0"],
+        "rl": ["stable-baselines3>=2.3.0"],
+        "render": ["pygame-ce>=2.5.0"],
+        "dev": ["pytest>=7.4.0", "pytest-cov>=4.1.0", "ruff", "build"],
         "tensorboard": ["tensorboard>=2.14.0"],
+        "full": [
+            "stable-baselines3>=2.3.0",
+            "pygame-ce>=2.5.0",
+            "tensorboard>=2.14.0",
+        ],
     },
     entry_points={
         "console_scripts": [
@@ -51,4 +55,5 @@ setup(
         ],
     },
     include_package_data=True,
+    package_data={"configs": ["default.yaml"]},
 )
