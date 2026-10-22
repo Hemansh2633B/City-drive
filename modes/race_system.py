@@ -4,8 +4,10 @@ Race System
 Core race logic: lap tracking, checkpoint validation, position ranking, race states.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Tuple, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
 from core.math import Vec2, vec2, vec2_sub, vec2_length, vec2_normalize, vec2_dot
@@ -432,6 +434,4 @@ class RaceManager:
                 return p
         return None
 
-
-from typing import Union
 from core.math import vec2
