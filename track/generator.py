@@ -371,8 +371,15 @@ class TrackGenerator:
         """Generate evenly spaced checkpoints along centerline."""
         checkpoints = []
         
-        # Place checkpoints every ~50-80 meters
-        target_spacing = 60.0
+        # Choose spacing from actual loop length so short seeds still have
+        # enough checkpoints and long seeds do not create an excessive number.
+        total_length = self._calculate_length(centerline)
+        desired_count = int(round(total_length / 60.0))
+        desired_count = max(
+            self.config.min_checkpoints,
+            min(self.config.max_checkpoints, desired_count)
+        )
+        target_spacing = total_length / (desired_count + 0.5)
         accumulated = 0.0
         last_checkpoint_idx = 0
         
@@ -396,7 +403,7 @@ class TrackGenerator:
                     is_start_finish=(len(checkpoints) == 0)
                 )
                 checkpoints.append(cp)
-                accumulated = 0.0
+                accumulated -= target_spacing
                 last_checkpoint_idx = i
         
         # Ensure at least minimum checkpoints
@@ -491,8 +498,10 @@ class TrackGenerator:
             # Keep every grid slot comfortably inside the road. The previous fixed
             # 3.5 m spacing placed the first car outside narrow tracks at reset.
             lateral_spacing = min(1.5, max(0.5, road_width * 0.18))
+            offsets = [0.0, -lateral_spacing, lateral_spacing,
+                       -2.0 * lateral_spacing, 2.0 * lateral_spacing]
             for i in range(5):
-                offset = (i - 2) * lateral_spacing
+                offset = offsets[i]
                 pos = vec2_add(start_checkpoint.position, vec2_mul(perp, offset))
                 pos = vec2_sub(pos, vec2_mul(start_checkpoint.direction, 5.0 + i * 2.5))
                 positions.append(pos)
