@@ -144,6 +144,9 @@ class RacingEnv(gym.Env):
         self.sim_context: Optional[SimulationContext] = None
         self.physics_world: Optional[PhysicsWorld] = None
         self.track: Optional[Track] = None
+        self._centerline_np: Optional[np.ndarray] = None
+        self._centerline_segments: Optional[np.ndarray] = None
+        self._centerline_segment_len_sq: Optional[np.ndarray] = None
         self.track_generator: Optional[TrackGenerator] = None
         self.vehicle: Optional[Vehicle] = None
         self.vehicle_body: Optional[RigidBody] = None
@@ -301,6 +304,14 @@ class RacingEnv(gym.Env):
                 f"Seed {episode_seed!r} generated an invalid track: "
                 + "; ".join(self.track.validation_errors)
             )
+        # The track is static during an episode. Cache its segment geometry so
+        # every simulation step can compute road distance with vectorized NumPy
+        # instead of looping through every centerline segment in Python.
+        self._centerline_np = np.asarray(self.track.centerline, dtype=np.float64)
+        self._centerline_segments = np.diff(self._centerline_np, axis=0)
+        self._centerline_segment_len_sq = np.einsum(
+            "ij,ij->i", self._centerline_segments, self._centerline_segments
+        )
         
         # Create player vehicle
         vehicle_rng = self.sim_context.get_rng('vehicle')
@@ -426,7 +437,8 @@ class RacingEnv(gym.Env):
         self.current_lap_time += dt
         
         # Log telemetry
-        if self.telemetry_enabled and self.current_step % self.game_config.telemetry.log_frequency == 0:
+        log_frequency = max(1, int(self.game_config.telemetry.log_frequency))
+        if self.telemetry_enabled and self.current_step % log_frequency == 0:
             self._log_telemetry(action, reward)
         
         # Get observation and info
@@ -436,23 +448,26 @@ class RacingEnv(gym.Env):
         return observation, reward, terminated, truncated, info
     
     def _get_surface_at_position(self, position: Vec2) -> Tuple[str, bool]:
-        """Determine surface type and whether on road at position."""
-        if self.track is None:
+        """Determine surface at the nearest track-centerline segment."""
+        if self.track is None or self._centerline_np is None:
             return "asphalt", True
-        
-        # Simple check: distance to centerline
-        min_dist = float('inf')
-        for i in range(len(self.track.centerline) - 1):
-            # Distance to segment
-            from core.math import point_line_distance
-            dist = point_line_distance(position, self.track.centerline[i], self.track.centerline[i + 1])
-            min_dist = min(min_dist, dist)
-        
+
+        starts = self._centerline_np[:-1]
+        segments = self._centerline_segments
+        relative = np.asarray(position, dtype=np.float64)[None, :] - starts
+        denom = np.maximum(self._centerline_segment_len_sq, 1e-12)
+        fractions = np.clip(
+            np.einsum("ij,ij->i", relative, segments) / denom, 0.0, 1.0
+        )
+        closest = starts + fractions[:, None] * segments
+        min_dist = float(np.min(np.linalg.norm(
+            np.asarray(position, dtype=np.float64)[None, :] - closest, axis=1
+        )))
+
         half_width = self.track.road_width * 0.5
-        on_road = min_dist <= half_width * 1.1  # Small margin
-        
+        on_road = min_dist <= half_width * 1.1
         return self.track.theme, on_road
-    
+
     def _calculate_reward(self) -> float:
         """Calculate step reward."""
         r = self.train_config.rewards
