@@ -35,6 +35,11 @@ class ActionMode(Enum):
     DISCRETE = "discrete"
 
 
+# The vector component has a stable size regardless of the selected observation
+# mode. Combined observations append sensor values to exactly this many values.
+VECTOR_OBSERVATION_SIZE = 80
+
+
 @dataclass
 class TrainingConfig:
     """Configuration for training environment."""
@@ -103,10 +108,12 @@ class RacingEnv(gym.Env):
     Gymnasium-compatible racing environment.
     
     Observation spaces:
-    - Vector: Vehicle state + track info + opponent info
-    - Sensor: Raycast distances around vehicle
-    - Image: Top-down camera view (optional)
-    - Combined: Vector + Sensor
+    - Vector: compact driving state and route-relative information
+    - Sensor: normalized ray distances plus vehicle state
+    - Combined: vector + sensor data
+
+    Image observations are deliberately rejected until a real camera observation is
+    implemented; feeding all-zero placeholder images is not a valid learning setup.
     
     Action spaces:
     - Continuous: [steering, throttle, brake] in [-1, 1] x [0, 1] x [0, 1]
@@ -126,6 +133,13 @@ class RacingEnv(gym.Env):
         self.train_config = config or TrainingConfig()
         self.game_config = game_config
         self.render_mode = render_mode
+        if self.train_config.observation_mode == ObservationMode.IMAGE:
+            raise ValueError(
+                "Image observations are not implemented yet. Use 'vector', "
+                "'sensor', or 'combined' so the policy never trains on placeholder images."
+            )
+        if render_mode not in (None, "human", "rgb_array"):
+            raise ValueError("render_mode must be None, 'human', or 'rgb_array'")
         
         # Spaces will be defined after track generation
         self.observation_space = None
@@ -135,6 +149,9 @@ class RacingEnv(gym.Env):
         self.sim_context: Optional[SimulationContext] = None
         self.physics_world: Optional[PhysicsWorld] = None
         self.track: Optional[Track] = None
+        self._centerline_np: Optional[np.ndarray] = None
+        self._centerline_segments: Optional[np.ndarray] = None
+        self._centerline_segment_len_sq: Optional[np.ndarray] = None
         self.track_generator: Optional[TrackGenerator] = None
         self.vehicle: Optional[Vehicle] = None
         self.vehicle_body: Optional[RigidBody] = None
@@ -188,8 +205,7 @@ class RacingEnv(gym.Env):
         # Observation space - will be sized properly in reset
         # For now, create a placeholder
         if self.train_config.observation_mode == ObservationMode.VECTOR:
-            # Approximate size: vehicle state (~30) + track info (~10) + opponents (~20 each)
-            obs_size = 80
+            obs_size = VECTOR_OBSERVATION_SIZE
             self.observation_space = spaces.Box(
                 low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
@@ -207,7 +223,7 @@ class RacingEnv(gym.Env):
             )
         else:  # COMBINED
             num_rays = self.train_config.sensor_config.get('num_rays', 16)
-            obs_size = 80 + num_rays + 6
+            obs_size = VECTOR_OBSERVATION_SIZE + num_rays + 6
             self.observation_space = spaces.Box(
                 low=-np.inf, high=np.inf, shape=(obs_size,), dtype=np.float32
             )
@@ -292,6 +308,14 @@ class RacingEnv(gym.Env):
                 f"Seed {episode_seed!r} generated an invalid track: "
                 + "; ".join(self.track.validation_errors)
             )
+        # The track is static during an episode. Cache its segment geometry so
+        # every simulation step can compute road distance with vectorized NumPy
+        # instead of looping through every centerline segment in Python.
+        self._centerline_np = np.asarray(self.track.centerline, dtype=np.float64)
+        self._centerline_segments = np.diff(self._centerline_np, axis=0)
+        self._centerline_segment_len_sq = np.einsum(
+            "ij,ij->i", self._centerline_segments, self._centerline_segments
+        )
         
         # Create player vehicle
         vehicle_rng = self.sim_context.get_rng('vehicle')
@@ -338,10 +362,11 @@ class RacingEnv(gym.Env):
             self.opponents.append(opp_vehicle)
             self.opponent_bodies.append(opp_body)
         
-        # Reset episode state
+        # Reset episode state. The car starts behind the start/finish gate,
+        # so checkpoint 0 is the first target it must cross.
         self.current_step = 0
         self.episode_reward = 0.0
-        self.last_checkpoint = 0
+        self.last_checkpoint = len(self.track.checkpoints) - 1
         self.checkpoints_crossed = 0
         self.laps_completed = 0
         self.wrong_way_time = 0.0
@@ -416,7 +441,8 @@ class RacingEnv(gym.Env):
         self.current_lap_time += dt
         
         # Log telemetry
-        if self.telemetry_enabled and self.current_step % self.game_config.telemetry.log_frequency == 0:
+        log_frequency = max(1, int(self.game_config.telemetry.log_frequency))
+        if self.telemetry_enabled and self.current_step % log_frequency == 0:
             self._log_telemetry(action, reward)
         
         # Get observation and info
@@ -426,23 +452,26 @@ class RacingEnv(gym.Env):
         return observation, reward, terminated, truncated, info
     
     def _get_surface_at_position(self, position: Vec2) -> Tuple[str, bool]:
-        """Determine surface type and whether on road at position."""
-        if self.track is None:
+        """Determine surface at the nearest track-centerline segment."""
+        if self.track is None or self._centerline_np is None:
             return "asphalt", True
-        
-        # Simple check: distance to centerline
-        min_dist = float('inf')
-        for i in range(len(self.track.centerline) - 1):
-            # Distance to segment
-            from core.math import point_line_distance
-            dist = point_line_distance(position, self.track.centerline[i], self.track.centerline[i + 1])
-            min_dist = min(min_dist, dist)
-        
+
+        starts = self._centerline_np[:-1]
+        segments = self._centerline_segments
+        relative = np.asarray(position, dtype=np.float64)[None, :] - starts
+        denom = np.maximum(self._centerline_segment_len_sq, 1e-12)
+        fractions = np.clip(
+            np.einsum("ij,ij->i", relative, segments) / denom, 0.0, 1.0
+        )
+        closest = starts + fractions[:, None] * segments
+        min_dist = float(np.min(np.linalg.norm(
+            np.asarray(position, dtype=np.float64)[None, :] - closest, axis=1
+        )))
+
         half_width = self.track.road_width * 0.5
-        on_road = min_dist <= half_width * 1.1  # Small margin
-        
+        on_road = min_dist <= half_width * 1.1
         return self.track.theme, on_road
-    
+
     def _calculate_reward(self) -> float:
         """Calculate step reward."""
         r = self.train_config.rewards
@@ -537,11 +566,11 @@ class RacingEnv(gym.Env):
             return True, False
         
         # Max steps
-        if self.current_step >= self.train_config.max_episode_steps:
+        if self.current_step + 1 >= self.train_config.max_episode_steps:
             return False, True
         
         # Max time
-        if self.sim_context.time >= self.train_config.max_race_time:
+        if self.sim_context.time + self.sim_context.dt >= self.train_config.max_race_time:
             return False, True
         
         # Offroad too long
@@ -563,19 +592,36 @@ class RacingEnv(gym.Env):
         return False, False
     
     def _get_observation(self) -> np.ndarray:
-        """Get current observation based on mode."""
+        """Return a finite float32 observation matching the declared space."""
         mode = self.train_config.observation_mode
-        
+
         if mode == ObservationMode.VECTOR:
-            return self._get_vector_observation()
+            observation = self._get_vector_observation()
         elif mode == ObservationMode.SENSOR:
-            return self._get_sensor_observation()
+            observation = self._get_sensor_observation()
         elif mode == ObservationMode.IMAGE:
-            return self._get_image_observation()
+            # Rejected during init until a real image renderer is implemented.
+            observation = self._get_image_observation()
         else:  # COMBINED
-            vec_obs = self._get_vector_observation()
-            sensor_obs = self._get_sensor_observation()
-            return np.concatenate([vec_obs, sensor_obs]).astype(np.float32)
+            observation = np.concatenate([
+                self._get_vector_observation(),
+                self._get_sensor_observation()
+            ])
+
+        observation = np.asarray(observation, dtype=np.float32)
+        expected_shape = self.observation_space.shape
+        if observation.shape != expected_shape:
+            raise RuntimeError(
+                f"{mode.value} observation shape {observation.shape} does not "
+                f"match declared space {expected_shape}"
+            )
+
+        # Physical simulations can occasionally produce non-finite intermediate
+        # values (for example after extreme steering). Never leak NaN/Inf into
+        # PPO or other Gymnasium agents: normalize those values to bounded sentinels.
+        return np.nan_to_num(
+            observation, copy=False, nan=0.0, posinf=1.0, neginf=-1.0
+        )
     
     def _get_vector_observation(self) -> np.ndarray:
         """Get vector observation."""
@@ -643,7 +689,7 @@ class RacingEnv(gym.Env):
         
         # Pad to fixed size if needed
         obs = np.array(obs, dtype=np.float32)
-        expected_size = self.observation_space.shape[0]
+        expected_size = VECTOR_OBSERVATION_SIZE
         if len(obs) < expected_size:
             obs = np.pad(obs, (0, expected_size - len(obs)))
         elif len(obs) > expected_size:

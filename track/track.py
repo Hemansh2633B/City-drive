@@ -4,8 +4,10 @@ Track Representation
 Data structures for tracks, checkpoints, racing lines, and track boundaries.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Union
 from dataclasses import dataclass, field
 from core.math import Vec2, vec2, vec2_add, vec2_sub, vec2_mul, vec2_normalize, vec2_perp, vec2_length, vec2_angle, vec2_rotate
 

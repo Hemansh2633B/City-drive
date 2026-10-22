@@ -5,6 +5,7 @@ Predefined vehicle configurations and factory functions.
 """
 
 from dataclasses import dataclass
+from copy import deepcopy
 from typing import Dict
 from vehicles.vehicle import VehicleConfig
 
@@ -84,7 +85,10 @@ def get_vehicle_preset(name: str) -> VehicleConfig:
     """Get a vehicle preset by name."""
     if name not in VEHICLE_PRESETS:
         raise ValueError(f"Unknown vehicle preset: {name}. Available: {list(VEHICLE_PRESETS.keys())}")
-    return VEHICLE_PRESETS[name]
+    # Never return a shared mutable singleton. Training curricula and race setup
+    # tune preset values; mutating the registry compounds those changes across
+    # environment resets and makes seeded runs depend on run history.
+    return deepcopy(VEHICLE_PRESETS[name])
 
 
 def list_vehicle_presets() -> list:
