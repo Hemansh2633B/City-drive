@@ -1,6 +1,9 @@
 """Regression tests for the focused single-agent training workflow."""
 
 import numpy as np
+import pytest
+import sys
+from types import SimpleNamespace
 
 from ai.training_env import ActionMode, ObservationMode, RacingEnv, TrainingConfig
 from core.config import load_config
@@ -142,3 +145,72 @@ def test_vehicle_presets_do_not_mutate_across_resets():
         assert np.isclose(first_speed, 45.0 * config.curriculum["stages"][0]["speed_multiplier"])
     finally:
         env.close()
+
+
+
+def test_evaluation_module_imports_and_exposes_cli():
+    # Importing used to fail at function definition because Union was missing.
+    from scripts import evaluate
+
+    assert callable(evaluate.main)
+    assert callable(evaluate.run_episode)
+
+
+def test_failed_trained_model_load_does_not_fall_back_to_random(monkeypatch):
+    from scripts import evaluate
+
+    def fail_load(_path):
+        raise FileNotFoundError("checkpoint missing")
+
+    fake_sb3 = SimpleNamespace(PPO=SimpleNamespace(load=fail_load))
+    monkeypatch.setitem(sys.modules, "stable_baselines3", fake_sb3)
+
+    env = RacingEnv(TrainingConfig(), load_config())
+    try:
+        with pytest.raises(RuntimeError, match="Failed to load trained model"):
+            evaluate.create_agent("missing-model.zip", env)
+    finally:
+        env.close()
+
+
+def test_evaluation_reports_track_completion_not_race_position():
+    from scripts import evaluate
+
+    config = TrainingConfig()
+    config.curriculum["enabled"] = False
+    config.max_episode_steps = 10
+    game_config = load_config()
+    env = RacingEnv(config, game_config)
+    try:
+        agent = evaluate.RandomAgent(env.action_space)
+        result = evaluate.run_episode(env, agent, seed=42, max_steps=1)
+        assert result["steps"] == 1
+        assert result["step_limit_reached"]
+        assert result["completed"] is False
+        assert result["target_laps"] >= 1
+        assert result["offroad_time"] >= 0.0
+        assert "final_position" not in result
+        assert "mean_position" not in result
+    finally:
+        env.close()
+
+
+def test_evaluation_summary_has_no_misleading_win_or_position_rates():
+    from scripts import evaluate
+
+    config = TrainingConfig()
+    config.curriculum["enabled"] = False
+    config.max_episode_steps = 10
+    summary = evaluate.evaluate_agent(
+        evaluate.RandomAgent(RacingEnv(config, load_config()).action_space),
+        [42],
+        config,
+        load_config(),
+        max_steps=1,
+        episodes_per_seed=1,
+    )
+    assert summary["num_episodes"] == 1
+    assert 0.0 <= summary["completion_rate"] <= 1.0
+    assert "win_rate" not in summary
+    assert "mean_final_position" not in summary
+    assert summary["best_lap_time"] is None
