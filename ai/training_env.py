@@ -373,6 +373,7 @@ class RacingEnv(gym.Env):
         self.wrong_way_time = 0.0
         self.idle_time = 0.0
         self.offroad_time = 0.0
+        self.total_offroad_time = 0.0
         self.collision_count = 0
         self.last_position = self.vehicle.state.position.copy()
         self.current_lap_time = 0.0
