@@ -153,7 +153,7 @@ def run_random_baseline(args, training_config, game_config, output_dir, seed):
                 "seed": info.get("seed", seed),
                 "track_valid": info.get("track_valid", False),
                 "collisions": info.get("collision_count", 0),
-                "offroad_time": info.get("offroad_time", 0.0)
+                "offroad_time": info.get("total_offroad_time", info.get("offroad_time", 0.0))
             }
             write_csv_row(output_dir / "metrics.csv", record)
             print(
@@ -233,7 +233,7 @@ def run_ppo(args, training_config, game_config, output_dir, seed):
                     "seed": info.get("seed", seed),
                     "track_valid": info.get("track_valid", False),
                     "collisions": info.get("collision_count", 0),
-                    "offroad_time": info.get("offroad_time", 0.0)
+                    "offroad_time": info.get("total_offroad_time", info.get("offroad_time", 0.0))
                 }
                 write_csv_row(self.metrics_path, record)
                 print(
