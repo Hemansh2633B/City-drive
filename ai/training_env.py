@@ -103,10 +103,12 @@ class RacingEnv(gym.Env):
     Gymnasium-compatible racing environment.
     
     Observation spaces:
-    - Vector: Vehicle state + track info + opponent info
-    - Sensor: Raycast distances around vehicle
-    - Image: Top-down camera view (optional)
-    - Combined: Vector + Sensor
+    - Vector: compact driving state and route-relative information
+    - Sensor: normalized ray distances plus vehicle state
+    - Combined: vector + sensor data
+
+    Image observations are deliberately rejected until a real camera observation is
+    implemented; feeding all-zero placeholder images is not a valid learning setup.
     
     Action spaces:
     - Continuous: [steering, throttle, brake] in [-1, 1] x [0, 1] x [0, 1]
@@ -545,11 +547,11 @@ class RacingEnv(gym.Env):
             return True, False
         
         # Max steps
-        if self.current_step >= self.train_config.max_episode_steps:
+        if self.current_step + 1 >= self.train_config.max_episode_steps:
             return False, True
         
         # Max time
-        if self.sim_context.time >= self.train_config.max_race_time:
+        if self.sim_context.time + self.sim_context.dt >= self.train_config.max_race_time:
             return False, True
         
         # Offroad too long
