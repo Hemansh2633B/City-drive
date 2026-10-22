@@ -152,9 +152,7 @@ class RacingEnv(gym.Env):
         self.current_step = 0
         self.episode_reward = 0.0
         self.episode_info: Dict[str, Any] = {}
-        # The starting line is checkpoint 0. Begin by targeting that line from
-        # behind it; this makes the first completed circuit count as the first lap.
-        self.last_checkpoint = len(self.track.checkpoints) - 1
+        self.last_checkpoint = 0
         self.checkpoints_crossed = 0
         self.laps_completed = 0
         self.wrong_way_time = 0.0
@@ -347,10 +345,11 @@ class RacingEnv(gym.Env):
             self.opponents.append(opp_vehicle)
             self.opponent_bodies.append(opp_body)
         
-        # Reset episode state
+        # Reset episode state. The car starts behind the start/finish gate,
+        # so checkpoint 0 is the first target it must cross.
         self.current_step = 0
         self.episode_reward = 0.0
-        self.last_checkpoint = 0
+        self.last_checkpoint = len(self.track.checkpoints) - 1
         self.checkpoints_crossed = 0
         self.laps_completed = 0
         self.wrong_way_time = 0.0
