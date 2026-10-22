@@ -168,6 +168,7 @@ class RacingEnv(gym.Env):
         self.wrong_way_time = 0.0
         self.idle_time = 0.0
         self.offroad_time = 0.0
+        self.total_offroad_time = 0.0
         self.collision_count = 0
         self.last_position = vec2(0, 0)
         self.best_lap_time = float('inf')
@@ -372,6 +373,7 @@ class RacingEnv(gym.Env):
         self.wrong_way_time = 0.0
         self.idle_time = 0.0
         self.offroad_time = 0.0
+        self.total_offroad_time = 0.0
         self.collision_count = 0
         self.last_position = self.vehicle.state.position.copy()
         self.current_lap_time = 0.0
@@ -521,6 +523,7 @@ class RacingEnv(gym.Env):
         if not state.on_road:
             reward += r['offroad_penalty_per_second'] * self.sim_context.dt
             self.offroad_time += self.sim_context.dt
+            self.total_offroad_time += self.sim_context.dt
         else:
             self.offroad_time = 0.0
         
@@ -760,6 +763,7 @@ class RacingEnv(gym.Env):
             'lap_times': self.lap_times.copy(),
             'collision_count': state.collision_count,
             'offroad_time': self.offroad_time,
+            'total_offroad_time': self.total_offroad_time,
             'reward': self.episode_reward,
             'seed': self.sim_context.seed,
             'track_length': self.track.total_length,
