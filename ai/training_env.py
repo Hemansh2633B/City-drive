@@ -126,6 +126,13 @@ class RacingEnv(gym.Env):
         self.train_config = config or TrainingConfig()
         self.game_config = game_config
         self.render_mode = render_mode
+        if self.train_config.observation_mode == ObservationMode.IMAGE:
+            raise ValueError(
+                "Image observations are not implemented yet. Use 'vector', "
+                "'sensor', or 'combined' so the policy never trains on placeholder images."
+            )
+        if render_mode not in (None, "human", "rgb_array"):
+            raise ValueError("render_mode must be None, 'human', or 'rgb_array'")
         
         # Spaces will be defined after track generation
         self.observation_space = None
@@ -145,7 +152,9 @@ class RacingEnv(gym.Env):
         self.current_step = 0
         self.episode_reward = 0.0
         self.episode_info: Dict[str, Any] = {}
-        self.last_checkpoint = 0
+        # The starting line is checkpoint 0. Begin by targeting that line from
+        # behind it; this makes the first completed circuit count as the first lap.
+        self.last_checkpoint = len(self.track.checkpoints) - 1
         self.checkpoints_crossed = 0
         self.laps_completed = 0
         self.wrong_way_time = 0.0
