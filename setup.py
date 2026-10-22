@@ -22,7 +22,8 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Hemansh2633B/City-drive",
-    packages=find_packages(),
+    packages=find_packages(exclude=("tests", "tests.*")),
+    py_modules=["main"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
