@@ -201,11 +201,18 @@ def test_evaluation_summary_has_no_misleading_win_or_position_rates():
     config = TrainingConfig()
     config.curriculum["enabled"] = False
     config.max_episode_steps = 10
+    game_config = load_config()
+    agent_env = RacingEnv(config, game_config)
+    try:
+        agent = evaluate.RandomAgent(agent_env.action_space)
+    finally:
+        agent_env.close()
+
     summary = evaluate.evaluate_agent(
-        evaluate.RandomAgent(RacingEnv(config, load_config()).action_space),
+        agent,
         [42],
         config,
-        load_config(),
+        game_config,
         max_steps=1,
         episodes_per_seed=1,
     )
