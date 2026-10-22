@@ -41,12 +41,25 @@ class Checkpoint:
         return left, right
     
     def contains_point(self, point: Vec2) -> bool:
-        """Check if point has crossed this checkpoint (in correct direction)."""
-        left, right = self.get_bounds()
-        # Check if point is on the correct side of the line
+        """
+        Return whether a point is beyond this checkpoint in the forward direction.
+
+        The checkpoint direction is the track tangent, while the physical checkpoint
+        line spans its perpendicular direction. The old cross-product check measured
+        lateral position instead of forward crossing, so it could trigger from the
+        wrong side of the road.
+        """
         to_point = vec2_sub(point, self.position)
-        cross = to_point[0] * self.direction[1] - to_point[1] * self.direction[0]
-        return cross > 0  # Crossed in forward direction
+        forward_distance = (
+            to_point[0] * self.direction[0]
+            + to_point[1] * self.direction[1]
+        )
+        perpendicular = vec2_perp(self.direction)
+        lateral_distance = abs(
+            to_point[0] * perpendicular[0]
+            + to_point[1] * perpendicular[1]
+        )
+        return forward_distance >= 0.0 and lateral_distance <= self.width * 0.5
 
 
 @dataclass
