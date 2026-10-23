@@ -28,7 +28,7 @@ def test_gpu_request_never_silently_falls_back_to_cpu():
         pytest.skip("CUDA is present; unavailable-device check does not apply")
     reference = make_reference()
     try:
-        with pytest.raises(RuntimeError, match="CUDA is unavailable"):
+        with pytest.raises(RuntimeError, match="requested CUDA"):
             GPUTrainingEnv.from_env(reference, batch_size=2, device="cuda")
     finally:
         reference.close()
