@@ -53,6 +53,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", default="training_runs/gpu_demo")
     parser.add_argument("--render-every", type=int, default=1)
+    parser.add_argument(
+        "--video-output",
+        default=None,
+        help="Optional MP4/GIF output path; requires the optional video extra.",
+    )
     args = parser.parse_args()
 
     if args.population_size < 5 or args.simulation_batch_size < 1 or args.generations < 1 or args.rollout_steps < 1:
@@ -76,10 +81,24 @@ def main() -> None:
 
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("Cannot render champion: CUDA is not available.")
-    reference = RacingEnv(training_config, load_config(), render_mode="human")
+    reference = RacingEnv(
+        training_config,
+        load_config(),
+        render_mode="rgb_array" if args.video_output else "human",
+    )
     sim = None
+    video_writer = None
     try:
         reference.reset(seed=args.seed + 9001)
+        if args.video_output:
+            try:
+                import imageio.v2 as imageio
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Video capture requires the optional dependency: "
+                    "python -m pip install -e '.[video]'"
+                ) from exc
+            video_writer = imageio.get_writer(args.video_output, fps=60)
         policy = load_elite_policy(
             Path(result["final_elite_checkpoint"]),
             device=args.device,
@@ -96,7 +115,14 @@ def main() -> None:
             observations, _, terminated, truncated, _ = sim.step(action)
             if step % max(args.render_every, 1) == 0:
                 copy_champion_to_reference(sim, reference)
-                reference.render()
+                frame = reference.render()
+                if video_writer is not None:
+                    if frame is None:
+                        raise RuntimeError(
+                            "Renderer returned no frame; install pygame-ce with "
+                            "the render extra and ensure the selected track is initialized."
+                        )
+                    video_writer.append_data(frame)
             if bool(terminated[0].detach().cpu()) or bool(truncated[0].detach().cpu()):
                 break
         print(
@@ -105,6 +131,9 @@ def main() -> None:
             f"laps={int(sim.laps_completed[0].detach().cpu())}."
         )
     finally:
+        if video_writer is not None:
+            video_writer.close()
+            print(f"Champion video saved to {args.video_output}")
         if sim is not None:
             sim.close()
         reference.close()

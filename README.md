@@ -223,3 +223,12 @@ collision bodies, so its collision counter does not currently distinguish polici
 The GPU design, source-derived behavior, known limits, commands and benchmark schema
 are documented in [docs/GPU_TRAINING.md](docs/GPU_TRAINING.md). CUDA throughput and
 speedup should only be claimed from an executed benchmark on the target hardware.
+
+
+Optional video capture from the champion demo requires the \`video\` extra (plus
+the existing renderer dependencies):
+
+\`\`\`bash
+python -m pip install -e ".[gpu,render,video]"
+python scripts/demo_gpu_training.py --device cuda --video-output champion.mp4
+\`\`\`

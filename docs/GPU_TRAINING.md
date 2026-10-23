@@ -88,6 +88,14 @@ Run the 10k-policy example:
 python scripts/train_gpu_evolution.py --config configs/gpu_evolution.yaml
 ```
 
+For video output, install the optional imageio/FFmpeg extra and pass `--video-output`
+to the demo. This records only the selected champion, not the full population:
+
+```bash
+python -m pip install -e ".[gpu,render,video]"
+python scripts/demo_gpu_training.py --device cuda --video-output champion.mp4
+```
+
 Start with a smaller smoke test on CUDA:
 
 ```bash
@@ -135,8 +143,7 @@ Fitness is configurable through `fitness_weights` in
 time and collisions should normally receive negative weights. Every weight must
 be finite; unknown component names are rejected.
 
-The selected fitness is averaged over the same track seeds every candidate sees.
-the configured track seeds. All candidates see the same tracks within a generation;
+All fitness components are averaged across the configured track seeds. All candidates see the same tracks within a generation;
 track seeds change across generations to reduce overfitting. The elite selector
 first restricts ranking to candidates with `collision_count == 0` (when at least
 five qualify), then selects five by the configured fitness. If fewer

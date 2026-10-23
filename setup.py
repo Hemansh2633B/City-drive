@@ -39,6 +39,7 @@ setup(
         "rl": ["stable-baselines3>=2.3.0"],
         "render": ["pygame-ce>=2.5.0"],
         "gpu": ["torch>=2.2.0"],
+        "video": ["imageio>=2.34.0", "imageio-ffmpeg>=0.4.9"],
         "dev": ["pytest>=7.4.0", "pytest-cov>=4.1.0", "ruff", "build"],
         "tensorboard": ["tensorboard>=2.14.0"],
         "full": [
