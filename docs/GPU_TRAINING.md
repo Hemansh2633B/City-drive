@@ -144,9 +144,15 @@ time and collisions should normally receive negative weights. Every weight must
 be finite; unknown component names are rejected.
 
 All fitness components are averaged across the configured track seeds. All candidates see the same tracks within a generation;
-track seeds change across generations to reduce overfitting. The elite selector
-first restricts ranking to candidates with `collision_count == 0` (when at least
-five qualify), then selects five by the configured fitness. If fewer
+track seeds change across generations to reduce overfitting. With `elitism: true` (the default), the chosen top-five candidates are copied
+unchanged into the next generation before mutated offspring refill the rest of the
+population. With `elitism: false`, all slots become mutated clones of selected
+parents; `keep_previous_elites` is then rejected because no previous elites are
+preserved.
+
+The elite selector first restricts ranking to candidates with
+`collision_count == 0` (when at least five qualify), then selects five by the
+configured fitness. If fewer
 than five are eligible, the generation is marked `insufficient_collision_free_elites`
 and the explicit `collision_fallback` applies:
 

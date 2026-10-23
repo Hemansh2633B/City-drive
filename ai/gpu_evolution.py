@@ -149,6 +149,7 @@ class EvolutionConfig:
         rollout_steps: int = 2_000,
         hidden_size: int = 64,
         elites: int = 5,
+        elitism: bool = True,
         mutation_sigma: float = 0.05,
         mutation_probability: float = 0.1,
         collision_fallback: str = "allow_collisions",
@@ -170,6 +171,8 @@ class EvolutionConfig:
             raise ValueError(
                 "collision_fallback must be allow_collisions, keep_previous_elites, or raise"
             )
+        if not elitism and collision_fallback == "keep_previous_elites":
+            raise ValueError("collision_fallback='keep_previous_elites' requires elitism=True")
         if mutation_sigma < 0 or not 0 <= mutation_probability <= 1:
             raise ValueError("invalid mutation configuration")
         self.population_size = int(population_size)
@@ -178,6 +181,7 @@ class EvolutionConfig:
         self.rollout_steps = int(rollout_steps)
         self.hidden_size = int(hidden_size)
         self.elites = int(elites)
+        self.elitism = bool(elitism)
         self.mutation_sigma = float(mutation_sigma)
         self.mutation_probability = float(mutation_probability)
         self.collision_fallback = collision_fallback
@@ -381,26 +385,42 @@ class GPUEvolutionTrainer:
 
     @torch.no_grad()
     def next_generation(self, elite_indices: torch.Tensor) -> None:
-        """Preserve top five policies and mutate elite clones to refill population."""
+        """Clone the selected top five and mutate offspring; optionally retain elites."""
         n = self.config.population_size
         elites = elite_indices.to(device=self.device, dtype=torch.long)
         if elites.numel() != self.config.elites:
             raise ValueError("exactly five elite indices are required")
-        # Move selected top five unchanged to slots [0:5].
-        self.population.copy_candidates(
-            elites,
-            torch.arange(self.config.elites, device=self.device),
-        )
-        self.previous_elite_indices = torch.arange(self.config.elites, device=self.device)
-        children = torch.arange(self.config.elites, n, device=self.device)
-        parent_positions = torch.randint(
-            0,
-            self.config.elites,
-            (children.numel(),),
-            generator=self.population.generator,
-            device=self.device,
-        )
-        parent_indices = parent_positions
+
+        if self.config.elitism:
+            # Preserve selected top-five parameter tensors unchanged in slots [0:5].
+            self.population.copy_candidates(
+                elites,
+                torch.arange(self.config.elites, device=self.device),
+            )
+            self.previous_elite_indices = torch.arange(self.config.elites, device=self.device)
+            children = torch.arange(self.config.elites, n, device=self.device)
+            parent_positions = torch.randint(
+                0,
+                self.config.elites,
+                (children.numel(),),
+                generator=self.population.generator,
+                device=self.device,
+            )
+            parent_indices = parent_positions
+        else:
+            # Without elitism, every destination is replaced by a mutated clone
+            # of one of the selected elites; no original slot survives unchanged.
+            self.previous_elite_indices = None
+            children = torch.arange(n, device=self.device)
+            parent_positions = torch.randint(
+                0,
+                self.config.elites,
+                (children.numel(),),
+                generator=self.population.generator,
+                device=self.device,
+            )
+            parent_indices = elites.index_select(0, parent_positions)
+
         self.population.copy_candidates(parent_indices, children)
         self.population.mutate(
             children,
@@ -460,6 +480,7 @@ class GPUEvolutionTrainer:
                 "generations": self.config.generations,
                 "rollout_steps": self.config.rollout_steps,
                 "hidden_size": self.config.hidden_size,
+                "elitism": self.config.elitism,
                 "mutation_sigma": self.config.mutation_sigma,
                 "mutation_probability": self.config.mutation_probability,
                 "collision_fallback": self.config.collision_fallback,

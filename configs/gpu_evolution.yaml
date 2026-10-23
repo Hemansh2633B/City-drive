@@ -8,6 +8,7 @@ generations: 50
 rollout_steps: 2000
 hidden_size: 64
 elites: 5
+elitism: true
 mutation_sigma: 0.05
 mutation_probability: 0.1
 # Fallbacks: allow_collisions, keep_previous_elites, raise

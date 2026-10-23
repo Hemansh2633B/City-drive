@@ -68,3 +68,51 @@ def test_selection_prefers_collision_free_and_flags_insufficient_set():
         assert len(set(selected.tolist())) == 5
     finally:
         trainer.close()
+
+
+def test_elitism_preserves_selected_policies_and_can_be_disabled():
+    config = EvolutionConfig(
+        population_size=8,
+        simulation_batch_size=4,
+        generations=1,
+        rollout_steps=1,
+        elitism=True,
+        mutation_sigma=0.25,
+        mutation_probability=1.0,
+        output_dir="/tmp/city-drive-gpu-elitism-test",
+    )
+    trainer = GPUEvolutionTrainer(config, TrainingConfig(), device="cpu")
+    try:
+        before = trainer.population.w1.clone()
+        selected = torch.tensor([7, 6, 5, 4, 3])
+        trainer.next_generation(selected)
+        torch.testing.assert_close(trainer.population.w1[:5], before[selected])
+        assert trainer.previous_elite_indices.tolist() == [0, 1, 2, 3, 4]
+    finally:
+        trainer.close()
+
+    no_elitism = EvolutionConfig(
+        population_size=8,
+        simulation_batch_size=4,
+        generations=1,
+        rollout_steps=1,
+        elitism=False,
+        mutation_sigma=0.25,
+        mutation_probability=1.0,
+        output_dir="/tmp/city-drive-gpu-no-elitism-test",
+    )
+    trainer = GPUEvolutionTrainer(no_elitism, TrainingConfig(), device="cpu")
+    try:
+        before = trainer.population.w1.clone()
+        trainer.next_generation(torch.tensor([7, 6, 5, 4, 3]))
+        assert trainer.previous_elite_indices is None
+        assert not torch.equal(trainer.population.w1, before)
+    finally:
+        trainer.close()
+
+    with pytest.raises(ValueError, match="requires elitism=True"):
+        EvolutionConfig(
+            population_size=8,
+            elitism=False,
+            collision_fallback="keep_previous_elites",
+        )
