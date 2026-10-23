@@ -104,10 +104,12 @@ def tensor_benchmark(
         synchronize(device)
         start = time.perf_counter()
         reward_sum = torch.zeros(batch_size, dtype=env.dtype, device=device)
+        completed_episodes = torch.zeros((), dtype=torch.long, device=device)
         for _ in range(steps):
             actions = policy.actions(obs)
-            obs, rewards, _, _, _ = env.step(actions)
+            obs, rewards, terminated, truncated, _ = env.step(actions)
             reward_sum.add_(rewards)
+            completed_episodes.add_((terminated | truncated).sum())
         synchronize(device)
         elapsed = time.perf_counter() - start
         allocated = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
@@ -143,6 +145,8 @@ def tensor_benchmark(
             "wall_seconds": elapsed,
             "simulation_steps_per_second": steps / elapsed,
             "agent_steps_per_second": batch_size * steps / elapsed,
+            "completed_episodes": int(completed_episodes.detach().cpu()),
+            "episodes_per_second": int(completed_episodes.detach().cpu()) / elapsed,
             "policy_inference_seconds": policy_elapsed,
             "policy_inference_seconds_per_batch_step": policy_elapsed / steps,
             "environment_components_seconds_per_step": component_timings,

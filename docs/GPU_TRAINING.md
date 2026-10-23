@@ -127,10 +127,19 @@ CPU environment while the GPU rollout is running.
 
 ## Fitness and collision eligibility
 
-Fitness defaults to the existing environment's cumulative reward, averaged over
+Fitness is configurable through `fitness_weights` in
+`configs/gpu_evolution.yaml`. It is the weighted sum of per-seed averages for
+`reward`, `distance_traveled`, `laps_completed`, `offroad_time`, and
+`collision_count`. The default preserves cumulative reward ranking
+(`reward: 1.0`; all other weights `0.0`). Cost-like metrics such as off-road
+time and collisions should normally receive negative weights. Every weight must
+be finite; unknown component names are rejected.
+
+The selected fitness is averaged over the same track seeds every candidate sees.
 the configured track seeds. All candidates see the same tracks within a generation;
 track seeds change across generations to reduce overfitting. The elite selector
-first ranks candidates with `collision_count == 0`, then selects five. If fewer
+first restricts ranking to candidates with `collision_count == 0` (when at least
+five qualify), then selects five by the configured fitness. If fewer
 than five are eligible, the generation is marked `insufficient_collision_free_elites`
 and the explicit `collision_fallback` applies:
 

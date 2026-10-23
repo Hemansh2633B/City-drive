@@ -12,6 +12,14 @@ mutation_sigma: 0.05
 mutation_probability: 0.1
 # Fallbacks: allow_collisions, keep_previous_elites, raise
 collision_fallback: allow_collisions
+# Fitness is a weighted sum. Penalize costs with negative weights.
+# Collision-free eligibility is applied before fitness ranking when >=5 agents qualify.
+fitness_weights:
+  reward: 1.0
+  distance_traveled: 0.0
+  laps_completed: 0.0
+  offroad_time: 0.0
+  collision_count: 0.0
 # Every candidate in a generation evaluates the same maps; maps vary by generation.
 track_seeds: [1001, 2002, 3003]
 output_dir: training_runs/gpu_evolution

@@ -36,6 +36,15 @@ def test_evolution_config_requires_explicit_valid_fallback():
         EvolutionConfig(collision_fallback="silent_relaxation")
     with pytest.raises(ValueError, match="population_size"):
         EvolutionConfig(population_size=4)
+    configurable = EvolutionConfig(
+        population_size=8,
+        fitness_weights={"reward": 2.0, "offroad_time": -3.0},
+    )
+    assert configurable.fitness_weights["reward"] == 2.0
+    assert configurable.fitness_weights["distance_traveled"] == 0.0
+    assert configurable.fitness_weights["offroad_time"] == -3.0
+    with pytest.raises(ValueError, match="unsupported fitness weight keys"):
+        EvolutionConfig(population_size=8, fitness_weights={"unknown_component": 1.0})
 
 
 def test_selection_prefers_collision_free_and_flags_insufficient_set():

@@ -152,6 +152,7 @@ class EvolutionConfig:
         mutation_sigma: float = 0.05,
         mutation_probability: float = 0.1,
         collision_fallback: str = "allow_collisions",
+        fitness_weights: Optional[dict[str, float]] = None,
         seed: int = 42,
         track_seeds: Sequence[int] = (1001, 2002, 3003),
         output_dir: str | Path = "training_runs/gpu_evolution",
@@ -180,6 +181,20 @@ class EvolutionConfig:
         self.mutation_sigma = float(mutation_sigma)
         self.mutation_probability = float(mutation_probability)
         self.collision_fallback = collision_fallback
+        default_fitness_weights = {
+            "reward": 1.0,
+            "distance_traveled": 0.0,
+            "laps_completed": 0.0,
+            "offroad_time": 0.0,
+            "collision_count": 0.0,
+        }
+        unknown_weights = set(fitness_weights or {}) - set(default_fitness_weights)
+        if unknown_weights:
+            raise ValueError(f"unsupported fitness weight keys: {sorted(unknown_weights)}")
+        selected_weights = {**default_fitness_weights, **(fitness_weights or {})}
+        if not all(math.isfinite(float(value)) for value in selected_weights.values()):
+            raise ValueError("fitness weights must be finite numbers")
+        self.fitness_weights = {key: float(value) for key, value in selected_weights.items()}
         self.seed = int(seed)
         self.track_seeds = tuple(int(s) for s in track_seeds)
         if not self.track_seeds:
@@ -286,12 +301,26 @@ class GPUEvolutionTrainer:
                 total_samples += 1
 
         tracks = float(len(cfg.track_seeds))
+        reward_mean = fitness_sum / tracks
+        offroad_mean = offroad_sum / tracks
+        collision_mean = collision_sum / tracks
+        laps_mean = laps_sum / tracks
+        distance_mean = distance_sum / tracks
+        weights = cfg.fitness_weights
+        fitness = (
+            weights["reward"] * reward_mean
+            + weights["distance_traveled"] * distance_mean
+            + weights["laps_completed"] * laps_mean
+            + weights["offroad_time"] * offroad_mean
+            + weights["collision_count"] * collision_mean
+        )
         return {
-            "fitness": fitness_sum / tracks,
-            "offroad_time": offroad_sum / tracks,
-            "collision_count": collision_sum / tracks,
-            "laps_completed": laps_sum / tracks,
-            "distance_traveled": distance_sum / tracks,
+            "fitness": fitness,
+            "reward": reward_mean,
+            "offroad_time": offroad_mean,
+            "collision_count": collision_mean,
+            "laps_completed": laps_mean,
+            "distance_traveled": distance_mean,
             "completed_episodes": completed_sum / tracks,
             "zero_collision": collision_sum == 0,
         }
@@ -390,7 +419,7 @@ class GPUEvolutionTrainer:
         }
         with csv_path.open("a", newline="", encoding="utf-8") as f:
             fieldnames = [
-                "generation", "candidate", "fitness", "collision_count",
+                "generation", "candidate", "fitness", "reward", "collision_count",
                 "offroad_time", "laps_completed", "distance_traveled",
                 "completed_episodes", "zero_collision",
             ]
@@ -403,6 +432,7 @@ class GPUEvolutionTrainer:
                     "generation": generation,
                     "candidate": index,
                     "fitness": float(host["fitness"][index]),
+                    "reward": float(host["reward"][index]),
                     "collision_count": float(host["collision_count"][index]),
                     "offroad_time": float(host["offroad_time"][index]),
                     "laps_completed": float(host["laps_completed"][index]),
@@ -433,6 +463,7 @@ class GPUEvolutionTrainer:
                 "mutation_sigma": self.config.mutation_sigma,
                 "mutation_probability": self.config.mutation_probability,
                 "collision_fallback": self.config.collision_fallback,
+                "fitness_weights": self.config.fitness_weights,
                 "seed": self.config.seed,
                 "track_seeds": list(self.config.track_seeds),
             },
