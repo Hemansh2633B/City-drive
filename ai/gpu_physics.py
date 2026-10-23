@@ -108,9 +108,21 @@ def integrate_rigid_body(
         position.add_(velocity * sub_dt * active_f)
         angular_velocity.add_(torque * (inverse_inertia * sub_dt) * active_1d)
         angle.add_(angular_velocity * sub_dt * active_1d)
-        # Same normalized range as RigidBody.integrate(), without data-dependent
-        # Python loops or host synchronization.
-        angle.copy_(torch.remainder(angle + 3.141592653589793, 6.283185307179586) - 3.141592653589793)
+        # Match RigidBody's inclusive [-pi, pi] bounds and leave terminal slots
+        # bit-for-bit unchanged. A plain remainder(angle + pi, 2*pi) maps +pi
+        # to -pi, which is equivalent geometrically but not state-identical.
+        wrapped = torch.remainder(angle, 6.283185307179586)
+        wrapped = torch.where(
+            wrapped > 3.141592653589793,
+            wrapped - 6.283185307179586,
+            wrapped,
+        )
+        wrapped = torch.where(
+            wrapped < -3.141592653589793,
+            wrapped + 6.283185307179586,
+            wrapped,
+        )
+        angle.copy_(torch.where(active, wrapped, angle))
         if substep == 0:
             force.zero_()
             torque.zero_()

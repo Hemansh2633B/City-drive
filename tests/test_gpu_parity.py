@@ -134,10 +134,13 @@ def test_partial_reset_and_terminated_slots_are_independent():
         actions = torch.tensor([[0.0, 1.0, 0.0]] * 3)
         gpu_env.step(actions)
         frozen_position = gpu_env.position[1].clone()
+        gpu_env.angle[1] = torch.pi
+        frozen_angle = gpu_env.angle[1].clone()
         gpu_env.terminated[1] = True
         for _ in range(3):
             gpu_env.step(actions)
         torch.testing.assert_close(gpu_env.position[1], frozen_position)
+        torch.testing.assert_close(gpu_env.angle[1], frozen_angle, atol=0.0, rtol=0.0)
         gpu_env.reset(mask=torch.tensor([False, True, False]))
         assert not bool(gpu_env.terminated[1])
         torch.testing.assert_close(gpu_env.position[1], gpu_env.spawn_position)
