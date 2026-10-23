@@ -241,3 +241,48 @@ def test_complete_short_episode_truncation_matches_cpu():
         if gpu_env is not None:
             gpu_env.close()
         reference.close()
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA hardware is not available")
+def test_cuda_multistep_physics_and_observations_match_cpu_reference():
+    reference = make_reference(393)
+    gpu_env = None
+    try:
+        reference.reset(seed=393)
+        gpu_env = GPUTrainingEnv.from_env(
+            reference, batch_size=1, device="cuda", dtype=torch.float64
+        )
+        gpu_env.reset()
+        for step in range(25):
+            action = (
+                np.array([0.0, 0.7, 0.0], dtype=np.float32)
+                if step < 12
+                else np.array([0.25, 0.6, 0.0], dtype=np.float32)
+            )
+            cpu_observation, cpu_reward, cpu_terminated, cpu_truncated, _ = reference.step(action)
+            gpu_observation, gpu_reward, terminated, truncated, _ = gpu_env.step(
+                torch.as_tensor(action[None, :], dtype=torch.float64, device="cuda")
+            )
+            np.testing.assert_allclose(
+                reference.vehicle.state.position,
+                gpu_env.position[0].detach().cpu().numpy(),
+                atol=2e-2,
+                rtol=2e-3,
+            )
+            assert float(gpu_reward[0].detach().cpu()) == pytest.approx(
+                cpu_reward, abs=1e-2, rel=1e-2
+            )
+            assert bool(terminated[0].detach().cpu()) == cpu_terminated
+            assert bool(truncated[0].detach().cpu()) == cpu_truncated
+            np.testing.assert_allclose(
+                gpu_observation[0].detach().cpu().numpy(),
+                cpu_observation,
+                atol=2e-2,
+                rtol=2e-2,
+            )
+            if cpu_terminated or cpu_truncated:
+                break
+    finally:
+        if gpu_env is not None:
+            gpu_env.close()
+        reference.close()

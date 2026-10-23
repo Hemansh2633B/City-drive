@@ -10,9 +10,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import time
 from pathlib import Path
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource is unavailable on Windows
+    resource = None
 
 import numpy as np
 import torch
@@ -31,16 +37,45 @@ def synchronize(device: torch.device) -> None:
         torch.cuda.synchronize(device)
 
 
+def process_cpu_seconds() -> float | None:
+    """Current process CPU time, when the platform exposes resource accounting."""
+    if resource is None:
+        return None
+    usage = resource.getrusage(resource.RUSAGE_SELF)
+    return float(usage.ru_utime + usage.ru_stime)
+
+
+def process_cpu_utilization_percent(start: float | None, end: float | None, elapsed: float) -> float | None:
+    """CPU use normalized to total logical-core capacity over a timed region."""
+    if start is None or end is None or elapsed <= 0:
+        return None
+    return 100.0 * max(end - start, 0.0) / elapsed / max(os.cpu_count() or 1, 1)
+
+
+def sampled_gpu_utilization_percent(device: torch.device) -> int | None:
+    """Best-effort instantaneous utilization sample, or None if unavailable."""
+    if device.type != "cuda":
+        return None
+    try:
+        device_index = device.index if device.index is not None else torch.cuda.current_device()
+        return int(torch.cuda.utilization(device_index))
+    except (AttributeError, RuntimeError, OSError):
+        return None
+
+
 def cpu_benchmark(batch_size: int, steps: int, seed: int, training_config: TrainingConfig) -> dict:
     envs = []
+    initialization_start = time.perf_counter()
     try:
         for index in range(batch_size):
             env = RacingEnv(training_config, load_config())
             env.reset(seed=seed + index)
             envs.append(env)
+        initialization_seconds = time.perf_counter() - initialization_start
         action = np.array([0.0, 1.0, 0.0], dtype=np.float32)
         for env in envs:
             env.step(action)  # warm-up
+        cpu_before = process_cpu_seconds()
         start = time.perf_counter()
         episode_ends = 0
         for step in range(steps):
@@ -50,13 +85,17 @@ def cpu_benchmark(batch_size: int, steps: int, seed: int, training_config: Train
                     episode_ends += 1
                     env.reset(seed=seed + step + 1)
         elapsed = time.perf_counter() - start
+        cpu_after = process_cpu_seconds()
         return {
             "batch_size": batch_size,
             "steps": steps,
+            "initialization_seconds": initialization_seconds,
             "wall_seconds": elapsed,
             "simulation_steps_per_second": steps / elapsed,
             "agent_steps_per_second": batch_size * steps / elapsed,
-            "completed_or_reset_episodes": episode_ends,
+            "completed_episodes": episode_ends,
+            "episodes_per_second": episode_ends / elapsed,
+            "process_cpu_utilization_percent": process_cpu_utilization_percent(cpu_before, cpu_after, elapsed),
             "status": "measured",
         }
     finally:
@@ -71,9 +110,14 @@ def tensor_benchmark(
     device: torch.device,
     training_config: TrainingConfig,
 ) -> dict:
+    reference_start = time.perf_counter()
     reference = RacingEnv(training_config, load_config())
+    reference_construction_seconds = time.perf_counter() - reference_start
     try:
+        track_start = time.perf_counter()
         reference.reset(seed=seed)
+        track_generation_seconds = time.perf_counter() - track_start
+        tensor_setup_start = time.perf_counter()
         env = GPUTrainingEnv.from_env(reference, batch_size=batch_size, device=device)
         policy = BatchedPolicyPopulation(
             batch_size,
@@ -83,6 +127,8 @@ def tensor_benchmark(
             seed=seed,
         )
         obs = env.reset()
+        synchronize(device)
+        tensor_setup_seconds = time.perf_counter() - tensor_setup_start
         actions = torch.zeros((batch_size, 3), dtype=env.dtype, device=device)
         actions[:, 1] = 1.0
         # Warm-up both environment and batched policy.
@@ -102,6 +148,7 @@ def tensor_benchmark(
 
         # End-to-end steady-state throughput (policy + physics/collision/reward/obs).
         synchronize(device)
+        cpu_before = process_cpu_seconds()
         start = time.perf_counter()
         reward_sum = torch.zeros(batch_size, dtype=env.dtype, device=device)
         completed_episodes = torch.zeros((), dtype=torch.long, device=device)
@@ -112,6 +159,8 @@ def tensor_benchmark(
             completed_episodes.add_((terminated | truncated).sum())
         synchronize(device)
         elapsed = time.perf_counter() - start
+        cpu_after = process_cpu_seconds()
+        gpu_utilization = sampled_gpu_utilization_percent(device)
         allocated = torch.cuda.max_memory_allocated(device) if device.type == "cuda" else 0
         reserved = torch.cuda.max_memory_reserved(device) if device.type == "cuda" else 0
         total_memory = torch.cuda.get_device_properties(device).total_memory if device.type == "cuda" else None
@@ -142,11 +191,17 @@ def tensor_benchmark(
         return {
             "batch_size": batch_size,
             "steps": steps,
+            "reference_construction_seconds": reference_construction_seconds,
+            "track_generation_seconds": track_generation_seconds,
+            "tensor_state_policy_initialization_and_geometry_transfer_seconds": tensor_setup_seconds,
+            "initialization_seconds": reference_construction_seconds + track_generation_seconds + tensor_setup_seconds,
             "wall_seconds": elapsed,
             "simulation_steps_per_second": steps / elapsed,
             "agent_steps_per_second": batch_size * steps / elapsed,
             "completed_episodes": int(completed_episodes.detach().cpu()),
             "episodes_per_second": int(completed_episodes.detach().cpu()) / elapsed,
+            "process_cpu_utilization_percent": process_cpu_utilization_percent(cpu_before, cpu_after, elapsed),
+            "gpu_utilization_percent_sampled": gpu_utilization,
             "policy_inference_seconds": policy_elapsed,
             "policy_inference_seconds_per_batch_step": policy_elapsed / steps,
             "environment_components_seconds_per_step": component_timings,

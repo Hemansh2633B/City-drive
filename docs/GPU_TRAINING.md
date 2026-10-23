@@ -173,12 +173,17 @@ floating point calculations.
 
 This implementation does not claim measured CUDA parity, throughput, or speedup
 from code inspection alone. The benchmark outputs per-batch wall time,
-simulation-steps/s, agent-steps/s, policy + environment throughput, peak allocated
-and reserved CUDA memory, device/version metadata and JSON results. It uses CUDA
-synchronization around timed regions. CPU reference comparison is capped at 64
+simulation-steps/s, agent-steps/s, completed episodes and episodes/s (when an
+episode finishes in the timed horizon), isolated policy inference, per-step physics,
+road-boundary, reward, termination and observation timings, initialization/track
+generation/geometry-transfer time, peak allocated and reserved CUDA memory,
+device/version metadata, best-effort sampled GPU utilization, and process CPU
+utilization normalized to host logical-core capacity. It uses CUDA synchronization
+around timed regions. CPU reference comparison is capped at 64
 agents by default because it instantiates a separate Python/Gym environment per
-agent; use `--cpu-max-batch` to expand it deliberately. Sizes skipped or failing
-allocation are marked as such rather than filled with fabricated numbers.
+agent; use `--cpu-max-batch` to expand it deliberately. Sizes skipped or failing allocation are marked as such rather than filled with fabricated numbers.
+GPU utilization is reported as a best-effort sample when the driver exposes it, not
+as a time-averaged utilization trace.
 
 Remaining constraints: track generation is CPU-side and transfers immutable
 geometry once per track; image observations are unsupported; the current reference
