@@ -42,3 +42,12 @@ jobs:
           python -m pip install -e ".[dev]"
       - name: Run GPU-backend CPU parity suite
         run: python -m pytest tests/test_gpu_parity.py tests/test_gpu_evolution.py -q
+
+      - name: Smoke-test evolutionary training through the tensor backend
+        run: |
+          python scripts/train_gpu_evolution.py --device cpu --population-size 8 --simulation-batch-size 4 --generations 1 --rollout-steps 3 --seed 123 --output-dir /tmp/city-drive-gpu-evolution-smoke
+          test -s /tmp/city-drive-gpu-evolution-smoke/elite_policies.pt
+      - name: Smoke-test benchmark output
+        run: |
+          python scripts/benchmark_gpu_env.py --device cpu --batches 1 --steps 5 --cpu-max-batch 1 --output /tmp/city-drive-gpu-benchmark.json
+          python -c "import json; d=json.load(open('/tmp/city-drive-gpu-benchmark.json')); assert any(r.get('status') == 'measured' for r in d['results'])"
