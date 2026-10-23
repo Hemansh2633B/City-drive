@@ -176,3 +176,59 @@ GitHub Actions runs the environment tests on supported Python versions. Test the
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+
+## GPU-native batched simulation and evolution
+
+The default Gymnasium `RacingEnv` remains the CPU reference environment. An optional
+PyTorch tensor backend is available for high-throughput evolutionary policy training:
+it stores independent vehicle state for thousands of agents on one explicit device
+and does not call `RacingEnv.step()` once per candidate.
+
+Install PyTorch with a build appropriate for your GPU and driver, then install the
+optional training dependencies:
+
+```bash
+python -m pip install -e ".[gpu,dev,render]"
+```
+
+Run the 10,000-policy example (batching controls concurrent simulation memory):
+
+```bash
+python scripts/train_gpu_evolution.py --config configs/gpu_evolution.yaml
+```
+
+Run a measured throughput / memory benchmark and save machine-readable JSON:
+
+```bash
+python scripts/benchmark_gpu_env.py --device cuda \\
+  --batches 1 64 256 1024 4096 10000 \\
+  --steps 250 --output training_runs/gpu_benchmark.json
+```
+
+For a small end-to-end demo that trains a population and renders the selected
+champion, use a desktop/display environment with the render extra installed:
+
+```bash
+python scripts/demo_gpu_training.py --device cuda \\
+  --population-size 512 --simulation-batch-size 256 \\
+  --generations 3 --rollout-steps 1000
+```
+
+The environment backend defaults to CUDA and fails loudly if CUDA is not available;
+`--device cpu` is an explicit debugging mode, not an automatic fallback. Vector,
+sensor and combined observations are supported; image observations are not. The
+existing focused single-agent environment has no static track-boundary or opponent
+collision bodies, so its collision counter does not currently distinguish policies.
+The GPU design, source-derived behavior, known limits, commands and benchmark schema
+are documented in [docs/GPU_TRAINING.md](docs/GPU_TRAINING.md). CUDA throughput and
+speedup should only be claimed from an executed benchmark on the target hardware.
+
+
+Optional video capture from the champion demo requires the \`video\` extra (plus
+the existing renderer dependencies):
+
+\`\`\`bash
+python -m pip install -e ".[gpu,render,video]"
+python scripts/demo_gpu_training.py --device cuda --video-output champion.mp4
+\`\`\`
