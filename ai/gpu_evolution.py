@@ -34,8 +34,8 @@ class BatchedPolicyPopulation:
         seed: int = 0,
         dtype: torch.dtype = torch.float32,
     ) -> None:
-        if population_size < 5:
-            raise ValueError("population_size must be >= 5 (five elites are required)")
+        if population_size < 1:
+            raise ValueError("population_size must be >= 1")
         if observation_size < 1 or hidden_size < 1:
             raise ValueError("observation_size and hidden_size must be positive")
         self.population_size = int(population_size)
