@@ -145,3 +145,99 @@ def test_partial_reset_and_terminated_slots_are_independent():
         if gpu_env is not None:
             gpu_env.close()
         reference.close()
+
+
+def test_multistep_acceleration_braking_and_steering_trajectory_matches_cpu():
+    reference = make_reference(111)
+    gpu_env = None
+    try:
+        reference.reset(seed=111)
+        gpu_env = GPUTrainingEnv.from_env(
+            reference, batch_size=1, device="cpu", dtype=torch.float64
+        )
+        gpu_env.set_track_from_env(reference)
+        gpu_env.reset()
+
+        def action_for_step(step):
+            if step < 15:
+                return np.array([0.0, 0.7, 0.0], dtype=np.float32)
+            if step < 25:
+                return np.array([0.0, 0.0, 0.65], dtype=np.float32)
+            if step < 50:
+                return np.array([0.35, 0.65, 0.0], dtype=np.float32)
+            return np.array([-0.2, 0.45, 0.0], dtype=np.float32)
+
+        for step in range(70):
+            action = action_for_step(step)
+            cpu_observation, cpu_reward, cpu_terminated, cpu_truncated, _ = reference.step(action)
+            gpu_observation, gpu_reward, terminated, truncated, _ = gpu_env.step(
+                torch.as_tensor(action[None, :], dtype=torch.float64)
+            )
+
+            np.testing.assert_allclose(
+                reference.vehicle.state.position,
+                gpu_env.position[0].detach().cpu().numpy(),
+                atol=2e-2,
+                rtol=2e-3,
+            )
+            assert float(gpu_env.angle[0]) == pytest.approx(
+                reference.vehicle.state.angle, abs=2e-2, rel=2e-3
+            )
+            assert float(gpu_env.speed[0]) == pytest.approx(
+                reference.vehicle.state.speed, abs=2e-2, rel=2e-3
+            )
+            assert float(gpu_reward[0]) == pytest.approx(cpu_reward, abs=1e-2, rel=2e-2)
+            assert bool(terminated[0]) == cpu_terminated
+            assert bool(truncated[0]) == cpu_truncated
+            np.testing.assert_allclose(
+                gpu_observation[0].detach().cpu().numpy(),
+                cpu_observation,
+                atol=2e-2,
+                rtol=2e-2,
+            )
+            if cpu_terminated or cpu_truncated:
+                break
+    finally:
+        if gpu_env is not None:
+            gpu_env.close()
+        reference.close()
+
+
+def test_complete_short_episode_truncation_matches_cpu():
+    config = TrainingConfig(action_mode=ActionMode.CONTINUOUS)
+    config.curriculum["enabled"] = False
+    config.max_episode_steps = 12
+    config.track_complexity = 0.25
+    reference = RacingEnv(config, load_config())
+    gpu_env = None
+    try:
+        reference.reset(seed=234)
+        gpu_env = GPUTrainingEnv.from_env(
+            reference, batch_size=1, device="cpu", dtype=torch.float64
+        )
+        gpu_env.reset()
+        action = np.array([0.0, 0.7, 0.0], dtype=np.float32)
+        saw_done = False
+        for _ in range(config.max_episode_steps):
+            cpu_observation, cpu_reward, cpu_terminated, cpu_truncated, _ = reference.step(action)
+            gpu_observation, gpu_reward, terminated, truncated, _ = gpu_env.step(
+                torch.as_tensor(action[None, :], dtype=torch.float64)
+            )
+            assert bool(terminated[0]) == cpu_terminated
+            assert bool(truncated[0]) == cpu_truncated
+            assert float(gpu_reward[0]) == pytest.approx(cpu_reward, abs=1e-2, rel=1e-2)
+            np.testing.assert_allclose(
+                gpu_observation[0].detach().cpu().numpy(),
+                cpu_observation,
+                atol=1e-2,
+                rtol=1e-2,
+            )
+            if cpu_terminated or cpu_truncated:
+                saw_done = True
+                break
+        assert saw_done
+        assert bool(gpu_env.truncated[0])
+    finally:
+        if gpu_env is not None:
+            gpu_env.close()
+        reference.close()
