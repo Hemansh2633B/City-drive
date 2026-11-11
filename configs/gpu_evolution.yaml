@@ -1,0 +1,33 @@
+# Optional GPU evolutionary training configuration.
+# Install PyTorch with the correct CUDA build for your host before running.
+device: cuda
+seed: 42
+population_size: 10000
+simulation_batch_size: 1024
+generations: 50
+rollout_steps: 2000
+hidden_size: 64
+elites: 5
+elitism: true
+mutation_sigma: 0.05
+mutation_probability: 0.1
+# Fallbacks: allow_collisions, keep_previous_elites, raise
+collision_fallback: allow_collisions
+# Fitness is a weighted sum. Penalize costs with negative weights.
+# Collision-free eligibility is applied before fitness ranking when >=5 agents qualify.
+fitness_weights:
+  reward: 1.0
+  distance_traveled: 0.0
+  laps_completed: 0.0
+  offroad_time: 0.0
+  collision_count: 0.0
+# Every candidate in a generation evaluates the same maps; maps vary by generation.
+track_seeds: [1001, 2002, 3003]
+output_dir: training_runs/gpu_evolution
+dtype: float32
+# Optional training-environment settings:
+observation_mode: vector
+max_episode_steps: 5000
+track_theme: asphalt
+track_complexity: 0.45
+road_width: 12.0

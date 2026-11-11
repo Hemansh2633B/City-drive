@@ -38,6 +38,8 @@ setup(
     extras_require={
         "rl": ["stable-baselines3>=2.3.0"],
         "render": ["pygame-ce>=2.5.0"],
+        "gpu": ["torch>=2.2.0"],
+        "video": ["imageio>=2.34.0", "imageio-ffmpeg>=0.4.9"],
         "dev": ["pytest>=7.4.0", "pytest-cov>=4.1.0", "ruff", "build"],
         "tensorboard": ["tensorboard>=2.14.0"],
         "full": [
@@ -52,8 +54,9 @@ setup(
             "city-drive-train=scripts.train:main",
             "city-drive-view=scripts.game:main",
             "city-drive-eval=scripts.evaluate:main",
+            "city-drive-train-gpu=scripts.train_gpu_evolution:main",
         ],
     },
     include_package_data=True,
-    package_data={"configs": ["default.yaml"]},
+    package_data={"configs": ["default.yaml", "gpu_evolution.yaml"]},
 )
